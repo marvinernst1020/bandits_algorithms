@@ -129,7 +129,7 @@ fit <- stan(file = "hmm_bernoulli.stan",
 print(fit, pars = c("init", "trans", "theta"))
 ```
 
-### Third Version - this is what we currently observe:
+### Third Version - this is what we **currently** observe:
 
 This version shows that we have significantly improved the model’s performance and stability compared to previous attempts. By reparameterizing the emission probabilities using a logit transformation (theta[1] = inv_logit(alpha), theta[2] = inv_logit(alpha + delta)) and adding informative priors on the transition matrix and emission separation, the sampler is now able to:
 
@@ -147,7 +147,7 @@ In contrast to earlier versions where the sampler was unstable (high Rhat, low n
 
 This model can now serve as a stable basis for simulating environments and evaluating bandit algorithms in non-stationary, partially observed settings.
 
-### Second Version - after doing some improvements:
+### Second Version - after some improvements:
 
 Right now, Stan is struggling because:
 
@@ -161,7 +161,7 @@ So let’s do two concrete things that will almost always help:
 
 2. Add Priors on Transition Probabilities
 
-### First Version - this is what we observed before doing some improvements:
+### First Version - this is what we observed before doing any improvements:
 
 These transition probabilities correctly recover the transition matrix we simulated!
 
@@ -196,96 +196,1324 @@ This does not affect inference, but ensures consistent labeling across chains.
 
 control = list(adapt_delta = 0.99, max_treedepth = 15)
 
-# Below is NOT up to date!
 
-# 4. Bandit Algorithms (UCB, UCB-Tuned, Thompson Sampling)
+# 4. Generating Simulated Data
+
+We fit a 2-state Bernoulli HMM, which is a special case of a Markov Switching Model. Now, we can use the estimated parameters from the fitted model to generate a new synthetic dataset that mimics the regime-switching structure observed in the original simulation.
+
+```{r generate-simulated-hmm-data}
+# Extract posterior means from fit
+posterior <- rstan::extract(fit)
+init_prob <- colMeans(posterior$init)
+trans_mat <- apply(posterior$trans, c(2,3), mean)
+theta_vals <- colMeans(posterior$theta)
+
+# Simulate new state sequence and observations
+set.seed(2025)
+n_sim <- 500
+states_sim <- numeric(n_sim)
+y_sim <- numeric(n_sim)
+
+# Initial state
+states_sim[1] <- sample(1:2, 1, prob = init_prob)
+
+# Forward simulation
+for (t in 2:n_sim) {
+  states_sim[t] <- sample(1:2, 1, prob = trans_mat[states_sim[t-1], ])
+}
+
+# Generate observations
+for (t in 1:n_sim) {
+  y_sim[t] <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+}
+
+simulated_data <- tibble(t = 1:n_sim, state = states_sim, y = y_sim)
+head(simulated_data)
+```
+
+
+# 6. Bandit Algorithms (UCB and Thompson Sampling)
+
+(Note: We call the tuned UCB version simply "UCB" from now on.)
 
 ```{r bandit-algorithms}
-K <- 1  # Only one arm in this simulation
-t_horizon <- n
+# Initialize storage
+n_bandit <- n_sim
+ucb_rewards <- numeric(n_bandit)
+ts_rewards <- numeric(n_bandit)
 
-# Thompson Sampling
-alpha <- 1; beta <- 1
+# True probabilities (hidden from bandit)
+p_true <- theta_vals[states_sim]
 
 # UCB parameters
-ucb_counts <- 0
-ucb_sum <- 0
+ucb_success <- rep(0, 2)
+ucb_trials <- rep(0, 2)
 
-# Tracking
-ts_regret <- ucb_regret <- rep(0, t_horizon)
+# Thompson parameters
+ts_alpha <- rep(1, 2)
+ts_beta <- rep(1, 2)
 
-for (t in 1:t_horizon) {
-  # True reward
-  p_true <- pi_vals[states[t]]
+for (t in 1:n_bandit) {
+  # UCB selection (tuned version)
+  ucb_values <- ifelse(
+    ucb_trials == 0,
+    1,
+    ucb_success / ucb_trials + 
+      sqrt(2 * log(t) / ucb_trials)
+  )
+  a_ucb <- which.max(ucb_values)
+  r_ucb <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+  ucb_rewards[t] <- r_ucb
+  ucb_success[a_ucb] <- ucb_success[a_ucb] + r_ucb
+  ucb_trials[a_ucb] <- ucb_trials[a_ucb] + 1
 
-  # Thompson Sampling action
-  ts_draw <- rbeta(1, alpha, beta)
-  ts_reward <- y[t]
-  alpha <- alpha + ts_reward
-  beta <- beta + (1 - ts_reward)
-  ts_regret[t] <- abs(p_true - ts_draw)
-
-  # UCB action
-  if (ucb_counts == 0) {
-    ucb_val <- 1
-  } else {
-    ucb_val <- (ucb_sum / ucb_counts) + 
-                sqrt(2 * log(t) / ucb_counts)
-  }
-  ucb_reward <- y[t]
-  ucb_counts <- ucb_counts + 1
-  ucb_sum <- ucb_sum + ucb_reward
-  ucb_regret[t] <- abs(p_true - ucb_val)
+  # Thompson Sampling selection
+  ts_draws <- rbeta(2, ts_alpha, ts_beta)
+  a_ts <- which.max(ts_draws)
+  r_ts <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+  ts_rewards[t] <- r_ts
+  ts_alpha[a_ts] <- ts_alpha[a_ts] + r_ts
+  ts_beta[a_ts] <- ts_beta[a_ts] + (1 - r_ts)
 }
-```
 
-# 5. Modifications to UCB: Sliding Window and Discounted
+# Compute cumulative regret (assuming oracle knows true best arm at each t)
+best_arm_probs <- pmax(theta_vals[states_sim], 1 - theta_vals[states_sim])
+ucb_regret <- cumsum(best_arm_probs - ucb_rewards)
+ts_regret <- cumsum(best_arm_probs - ts_rewards)
 
-```{r modified-ucb}
-window_size <- 20
-ucb_window_regret <- ucb_discount_regret <- rep(0, t_horizon)
+# Plot cumulative regret
+regret_df <- tibble(
+  t = 1:n_bandit,
+  UCB = ucb_regret,
+  Thompson = ts_regret
+) %>% pivot_longer(-t)
 
-gamma <- 0.95  # discount factor
-ucb_sum_d <- 0
-ucb_counts_d <- 0
-
-for (t in 1:t_horizon) {
-  p_true <- pi_vals[states[t]]
-
-  # Sliding window UCB
-  start <- max(1, t - window_size + 1)
-  window_rewards <- y[start:t]
-  n_window <- length(window_rewards)
-  mean_r <- mean(window_rewards)
-  ucb_val <- mean_r + sqrt(2 * log(t) / n_window)
-  ucb_window_regret[t] <- abs(p_true - ucb_val)
-
-  # Discounted UCB
-  ucb_sum_d <- gamma * ucb_sum_d + y[t]
-  ucb_counts_d <- gamma * ucb_counts_d + 1
-  mean_d <- ucb_sum_d / ucb_counts_d
-  ucb_val_d <- mean_d + sqrt(2 * log(t) / ucb_counts_d)
-  ucb_discount_regret[t] <- abs(p_true - ucb_val_d)
-}
-```
-
-# 6. Plot Regret Comparison
-
-```{r plot-regret}
-tibble(
-  t = 1:n,
-  Thompson = cumsum(ts_regret),
-  UCB = cumsum(ucb_regret),
-  UCB_Window = cumsum(ucb_window_regret),
-  UCB_Discount = cumsum(ucb_discount_regret)
-) %>%
-  pivot_longer(-t) %>%
-  ggplot(aes(x = t, y = value, color = name)) +
+ggplot(regret_df, aes(x = t, y = value, color = name)) +
   geom_line() +
-  labs(title = "Cumulative Regret Over Time",
-       y = "Cumulative Regret", x = "Time Step") +
+  labs(title = "Cumulative Regret: UCB vs Thompson Sampling",
+       x = "Time Step", y = "Cumulative Regret",
+       color = "Algorithm") +
   theme_minimal()
 ```
+From time step 0 to 300, their cumulative regret curves are nearly identical. This means:
+
+-	Both algorithms adapt at roughly the same rate
+
+-	The regime switches weren’t too punishing for either approach
+
+-	This part of the run is relatively balanced
+
+Between time steps 300–450, Thompson Sampling performs slightly worse
+
+-	Thompson’s regret increases sharper than UCB’s during that stretch.
+
+-	Suggests that in this segment, UCB may have adapted more quickly to changes in the hidden state.
+
+-	This could be due to how UCB handles uncertainty more aggressively (through confidence bounds), while Thompson may remain more exploratory.
+
+In the end (t = 500) both algorithms end up with similar regret, so they learned, and neither dominates.
+
+
+# 7. Computing Average Performance
+
+Now, we repeat the simulation multiple times (100 runs) and plot average regret with confidence intervals.
+
+```{r average-performance, warning=FALSE}
+set.seed(2025)
+n_runs <- 100
+n_bandit <- 500
+
+regret_ucb_all <- matrix(0, nrow = n_bandit, ncol = n_runs)
+regret_ts_all <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+for (r in 1:n_runs) {
+  # Simulate new state sequence
+  states_sim <- numeric(n_bandit)
+  y_sim <- numeric(n_bandit)
+  states_sim[1] <- sample(1:2, 1, prob = init_prob)
+  for (t in 2:n_bandit) {
+    states_sim[t] <- sample(1:2, 1, prob = trans_mat[states_sim[t-1], ])
+  }
+  for (t in 1:n_bandit) {
+    y_sim[t] <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+  }
+
+  # True reward probabilities
+  p_true <- theta_vals[states_sim]
+  best_arm_probs <- pmax(p_true, 1 - p_true)
+
+  # Initialize bandit stats
+  ucb_success <- rep(0, 2)
+  ucb_trials <- rep(0, 2)
+  ts_alpha <- rep(1, 2)
+  ts_beta <- rep(1, 2)
+
+  regret_ucb <- numeric(n_bandit)
+  regret_ts <- numeric(n_bandit)
+
+  for (t in 1:n_bandit) {
+    # --- UCB ---
+    ucb_values <- ifelse(
+      ucb_trials == 0,
+      1,
+      ucb_success / ucb_trials + sqrt(2 * log(t) / ucb_trials)
+    )
+    a_ucb <- which.max(ucb_values)
+    r_ucb <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+    regret_ucb[t] <- best_arm_probs[t] - r_ucb
+    ucb_success[a_ucb] <- ucb_success[a_ucb] + r_ucb
+    ucb_trials[a_ucb] <- ucb_trials[a_ucb] + 1
+
+    # --- Thompson Sampling ---
+    ts_draws <- rbeta(2, ts_alpha, ts_beta)
+    a_ts <- which.max(ts_draws)
+    r_ts <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+    regret_ts[t] <- best_arm_probs[t] - r_ts
+    ts_alpha[a_ts] <- ts_alpha[a_ts] + r_ts
+    ts_beta[a_ts] <- ts_beta[a_ts] + (1 - r_ts)
+  }
+
+  regret_ucb_all[,r] <- cumsum(regret_ucb)
+  regret_ts_all[,r] <- cumsum(regret_ts)
+}
+
+# Compute average and 95% CI
+regret_summary <- tibble(
+  t = 1:n_bandit,
+  UCB_mean = rowMeans(regret_ucb_all),
+  TS_mean = rowMeans(regret_ts_all),
+  UCB_sd = apply(regret_ucb_all, 1, sd),
+  TS_sd = apply(regret_ts_all, 1, sd)
+) %>% 
+  mutate(
+    UCB_lower = UCB_mean - 1.96 * UCB_sd / sqrt(n_runs),
+    UCB_upper = UCB_mean + 1.96 * UCB_sd / sqrt(n_runs),
+    TS_lower = TS_mean - 1.96 * TS_sd / sqrt(n_runs),
+    TS_upper = TS_mean + 1.96 * TS_sd / sqrt(n_runs)
+  )
+
+regret_summary_long <- regret_summary %>%
+  select(t, UCB_mean, TS_mean, UCB_lower, UCB_upper, TS_lower, TS_upper) %>%
+  pivot_longer(-t, names_to = c("Algorithm", ".value"), names_pattern = "(.*)_([a-z]+)")
+
+ggplot(regret_summary_long, aes(x = t, y = mean, color = Algorithm, fill = Algorithm)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Average Cumulative Regret over 100 Simulations",
+       y = "Average Cumulative Regret", x = "Time Step") +
+  theme_minimal()
+```
+We observe that both algorithms perform similarly across the 100 simulations. The cumulative regret curves for UCB and TS are close throughout the time horizon, and their confidence intervals largely overlap.
+
+Although TS shows a slightly lower average regret toward the later stages, the difference remains within the 95% confidence bands, indicating that this trend is not statistically significant based on this experiment.
+
+
+# 8. Lower Transition Stickiness
+
+In the next steps we will start with more challenging environments. Here we first lower the transition stickiness. The first transition matrix is:
+$$ P = \begin{bmatrix} 0.6 & 0.4 \\ 0.4 & 0.6 \end{bmatrix} $$
+
+We simulate this more dynamic environment and compare the average performance of UCB and Thompson Sampling over 100 simulations.
+
+```{r low-stickiness-performance, warning=FALSE}
+set.seed(2042)
+n_runs <- 100
+n_bandit <- 500
+
+# Lower stickiness transition matrix
+P_low <- matrix(c(0.6, 0.4,
+                  0.4, 0.6), nrow = 2, byrow = TRUE)
+
+regret_ucb_all <- matrix(0, nrow = n_bandit, ncol = n_runs)
+regret_ts_all <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+for (r in 1:n_runs) {
+  states_sim <- numeric(n_bandit)
+  y_sim <- numeric(n_bandit)
+  states_sim[1] <- sample(1:2, 1, prob = init_prob)
+  for (t in 2:n_bandit) {
+    states_sim[t] <- sample(1:2, 1, prob = P_low[states_sim[t-1], ])
+  }
+  for (t in 1:n_bandit) {
+    y_sim[t] <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+  }
+
+  p_true <- theta_vals[states_sim]
+  best_arm_probs <- pmax(p_true, 1 - p_true)
+
+  ucb_success <- rep(0, 2)
+  ucb_trials <- rep(0, 2)
+  ts_alpha <- rep(1, 2)
+  ts_beta <- rep(1, 2)
+
+  regret_ucb <- numeric(n_bandit)
+  regret_ts <- numeric(n_bandit)
+
+  for (t in 1:n_bandit) {
+    # UCB
+    ucb_values <- ifelse(
+      ucb_trials == 0,
+      1,
+      ucb_success / ucb_trials + sqrt(2 * log(t) / ucb_trials)
+    )
+    a_ucb <- which.max(ucb_values)
+    r_ucb <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+    regret_ucb[t] <- best_arm_probs[t] - r_ucb
+    ucb_success[a_ucb] <- ucb_success[a_ucb] + r_ucb
+    ucb_trials[a_ucb] <- ucb_trials[a_ucb] + 1
+
+    # Thompson Sampling
+    ts_draws <- rbeta(2, ts_alpha, ts_beta)
+    a_ts <- which.max(ts_draws)
+    r_ts <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+    regret_ts[t] <- best_arm_probs[t] - r_ts
+    ts_alpha[a_ts] <- ts_alpha[a_ts] + r_ts
+    ts_beta[a_ts] <- ts_beta[a_ts] + (1 - r_ts)
+  }
+
+  regret_ucb_all[,r] <- cumsum(regret_ucb)
+  regret_ts_all[,r] <- cumsum(regret_ts)
+}
+
+
+regret_summary_low <- tibble(
+  t = 1:n_bandit,
+  UCB_mean = rowMeans(regret_ucb_all),
+  TS_mean = rowMeans(regret_ts_all),
+  UCB_sd = apply(regret_ucb_all, 1, sd),
+  TS_sd = apply(regret_ts_all, 1, sd)
+) %>% 
+  mutate(
+    UCB_lower = UCB_mean - 1.96 * UCB_sd / sqrt(n_runs),
+    UCB_upper = UCB_mean + 1.96 * UCB_sd / sqrt(n_runs),
+    TS_lower = TS_mean - 1.96 * TS_sd / sqrt(n_runs),
+    TS_upper = TS_mean + 1.96 * TS_sd / sqrt(n_runs)
+  )
+
+regret_summary_low_long <- regret_summary_low %>%
+  select(t, UCB_mean, TS_mean, UCB_lower, UCB_upper, TS_lower, TS_upper) %>%
+  pivot_longer(-t, names_to = c("Algorithm", ".value"), names_pattern = "(.*)_([a-z]+)")
+
+ggplot(regret_summary_low_long, aes(x = t, y = mean, color = Algorithm, fill = Algorithm)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Average Cumulative Regret (Low Stickiness Transition Matrix)",
+       y = "Average Cumulative Regret", x = "Time Step") +
+  theme_minimal()
+```
+In the more dynamic setting with frequent regime switches we observe that the performance of UCB and Thompson Sampling becomes even more similar.
+
+While UCB tends to slightly outperform Thompson Sampling toward the later time steps, this difference is not statistically significant, as it lies well within the 95% confidence intervals.
+
+This suggests that in highly volatile environments:
+
+-	Both algorithms adapt similarly overall
+
+-	The performance gap narrows
+
+-	Neither method clearly dominates under this specific transition structure
+
+---
+This reinforces the idea that more aggressive modifications (e.g., sliding window, discounting) may be needed to better handle frequent state changes.
+---
+
+
+# 9. Implementing Sliding Window UCB
+
+Now, we will make the UCB algorithm focus only on recent observations using a **sliding window**. We begin with window sizes of **20**, **50**, and **100**. This can help UCB adapt more quickly to dynamic environments by ignoring outdated information, which is particularly useful when the reward distribution changes due to hidden state switching.
+
+We evaluate the performance of each sliding window version alongside standard UCB and Thompson Sampling.
+
+```{r sliding-window-ucb, warning=FALSE}
+run_sliding_ucb <- function(window_size, P_matrix, theta_vals, n_runs = 100, n_bandit = 500) {
+  regret_ucb_all <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    states_sim <- numeric(n_bandit)
+    y_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1, prob = init_prob)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_matrix[states_sim[t-1], ])
+    }
+    for (t in 1:n_bandit) {
+      y_sim[t] <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+    }
+
+    p_true <- theta_vals[states_sim]
+    best_arm_probs <- pmax(p_true, 1 - p_true)
+
+    # Store past observations
+    history <- list(arm = integer(), reward = numeric())
+    regret_ucb <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      ucb_values <- numeric(2)
+      for (a in 1:2) {
+        # Filter sliding window for arm a
+        idx <- which(history$arm == a)
+        idx <- tail(idx, window_size)
+        n_trials <- length(idx)
+        successes <- sum(history$reward[idx])
+
+        if (n_trials == 0) {
+          ucb_values[a] <- 1  # optimistic initialization
+        } else {
+          mean_r <- successes / n_trials
+          ucb_values[a] <- mean_r + sqrt(2 * log(t) / n_trials)
+        }
+      }
+
+      a_ucb <- which.max(ucb_values)
+      r_ucb <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
+      regret_ucb[t] <- best_arm_probs[t] - r_ucb
+      history$arm <- c(history$arm, a_ucb)
+      history$reward <- c(history$reward, r_ucb)
+    }
+
+    regret_ucb_all[,r] <- cumsum(regret_ucb)
+  }
+
+  # Summary stats
+  tibble(
+    t = 1:n_bandit,
+    regret_mean = rowMeans(regret_ucb_all),
+    regret_sd = apply(regret_ucb_all, 1, sd)
+  ) %>%
+    mutate(
+      lower = regret_mean - 1.96 * regret_sd / sqrt(n_runs),
+      upper = regret_mean + 1.96 * regret_sd / sqrt(n_runs),
+      Window = paste0("SW-UCB (", window_size, ")")
+    )
+}
+
+# Run for multiple window sizes
+P_low <- matrix(c(0.6, 0.4, 0.4, 0.6), nrow = 2, byrow = TRUE)
+sw_ucb_20 <- run_sliding_ucb(20, P_low, theta_vals)
+sw_ucb_50 <- run_sliding_ucb(50, P_low, theta_vals)
+sw_ucb_100 <- run_sliding_ucb(100, P_low, theta_vals)
+
+regret_all_sw <- bind_rows(sw_ucb_20, sw_ucb_50, sw_ucb_100)
+
+ggplot(regret_all_sw, aes(x = t, y = regret_mean, color = Window, fill = Window)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Sliding Window UCB Performance (Low Stickiness)",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+In this low-stickiness environment, all versions of Sliding Window UCB (window sizes 20, 50, and 100) perform nearly identically. This suggests that UCB’s adaptation to recent changes is robust across a wide range of memory lengths, at least when the number of arms is small and state changes are frequent but not extreme. Also, their performance is visually indistinguishable from the previous plot comparing standard UCB and Thompson Sampling. There is no evidence that shorter windows yield significant gains in this particular setting.
+
+
+# 10. Adding a Third Arm
+
+Next, we add a third arm to increase the complexity of the bandit environment. This allows us to explore how each algorithm handles more challenging exploration-exploitation trade-offs. We'll simulate a 3-arm setting and compare the performance of **standard UCB**, **Thompson Sampling**, and **Sliding Window UCB (window = 20)**. Also, we increased it to 1000 runs, since for 100 we had not as clear results yet.
+
+```{r simulate-3arm-and-compare, warning=FALSE}
+set.seed(2043)
+n_runs <- 1000
+n_bandit <- 500
+
+# Define new success probabilities for 3 arms
+theta_vals_3 <- c(0.2, 0.5, 0.8)
+
+# Transition matrix (still 2-state HMM determining active best arm)
+P_3 <- matrix(c(0.6, 0.4,
+                0.4, 0.6), nrow = 2, byrow = TRUE)
+
+run_bandit_3arm <- function(algorithm = "ucb", window_size = 20) {
+  regret_mat <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    # Simulate state sequence and arm mapping
+    states_sim <- numeric(n_bandit)
+    arms <- numeric(n_bandit)
+    rewards <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_3[states_sim[t-1], ])
+    }
+    # Generate optimal arms by state (e.g., alternating best between arms)
+    best_arm_by_state <- list(`1` = 3, `2` = 1)
+    optimal_probs <- sapply(states_sim, function(s) theta_vals_3[best_arm_by_state[[as.character(s)]]])
+
+    # Algorithm setup
+    if (algorithm == "ucb") {
+      success <- rep(0, 3)
+      trials <- rep(0, 3)
+    } else if (algorithm == "ts") {
+      alpha <- rep(1, 3)
+      beta <- rep(1, 3)
+    } else if (algorithm == "sw_ucb") {
+      history <- list(arm = integer(), reward = numeric())
+    }
+
+    regrets <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      if (algorithm == "ucb") {
+        values <- ifelse(trials == 0, 1,
+                         success / trials + sqrt(2 * log(t) / trials))
+        a <- which.max(values)
+      } else if (algorithm == "ts") {
+        values <- rbeta(3, alpha, beta)
+        a <- which.max(values)
+      } else if (algorithm == "sw_ucb") {
+        values <- numeric(3)
+        for (i in 1:3) {
+          idx <- which(history$arm == i)
+          idx <- tail(idx, window_size)
+          n_trials <- length(idx)
+          s <- sum(history$reward[idx])
+          values[i] <- ifelse(n_trials == 0, 1, s/n_trials + sqrt(2 * log(t) / n_trials))
+        }
+        a <- which.max(values)
+      }
+
+      r <- rbinom(1, 1, prob = theta_vals_3[a])
+      regrets[t] <- optimal_probs[t] - r
+
+      if (algorithm == "ucb") {
+        success[a] <- success[a] + r
+        trials[a] <- trials[a] + 1
+      } else if (algorithm == "ts") {
+        alpha[a] <- alpha[a] + r
+        beta[a] <- beta[a] + (1 - r)
+      } else if (algorithm == "sw_ucb") {
+        history$arm <- c(history$arm, a)
+        history$reward <- c(history$reward, r)
+      }
+    }
+
+    regret_mat[, r] <- cumsum(regrets)
+  }
+
+  return(regret_mat)
+}
+
+regret_ucb_3 <- run_bandit_3arm("ucb")
+regret_ts_3 <- run_bandit_3arm("ts")
+regret_swucb_3 <- run_bandit_3arm("sw_ucb")
+
+t <- 1:n_bandit
+regret_df_3arm <- tibble(
+  t = rep(t, 3),
+  regret = c(rowMeans(regret_ucb_3), rowMeans(regret_ts_3), rowMeans(regret_swucb_3)),
+  sd = c(apply(regret_ucb_3, 1, sd), apply(regret_ts_3, 1, sd), apply(regret_swucb_3, 1, sd)),
+  method = rep(c("UCB", "Thompson", "SW-UCB (20)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_3arm, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret: UCB vs TS vs Sliding UCB (3 Arms, Window = 20)",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+In the 3-arm environment, all algorithms demonstrate effective adaptation, with cumulative regret surprisingly decreasing over time. This may indicate that, on average, the algorithms are outperforming the per-step oracle due to consistent identification of a robustly good arm. Thompson Sampling and Sliding Window UCB (window = 20) exhibit slightly lower regret than standard UCB, though all three perform similarly overall.
+
+# 11. Adding a Fourth Arm
+
+To further increase the complexity of the bandit environment, we now add a **fourth arm**. This allows us to evaluate how well each algorithm scales with increased action space.
+
+We define success probabilities for four arms and simulate a dynamic environment as before. We'll compare **UCB**, **Thompson Sampling**, **Sliding Window UCB (window = 20)**, and **Sliding Window UCB (window = 50)** (this we added since we observed that 20 may be too low).
+
+```{r simulate-4arm-and-compare, warning=FALSE}
+set.seed(2044)
+n_runs <- 1000
+n_bandit <- 500
+
+# Define new success probabilities for 4 arms
+theta_vals_4 <- c(0.2, 0.4, 0.6, 0.8)
+
+# Transition matrix (2-state HMM switching between optimal arms)
+P_4 <- matrix(c(0.6, 0.4,
+                0.4, 0.6), nrow = 2, byrow = TRUE)
+
+run_bandit_4arm <- function(algorithm = "ucb", window_size = 20) {
+  regret_mat <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    states_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_4[states_sim[t-1], ])
+    }
+
+    best_arm_by_state <- list(`1` = 4, `2` = 1)
+    optimal_probs <- sapply(states_sim, function(s) theta_vals_4[best_arm_by_state[[as.character(s)]]])
+
+    if (algorithm == "ucb") {
+      success <- rep(0, 4)
+      trials <- rep(0, 4)
+    } else if (algorithm == "ts") {
+      alpha <- rep(1, 4)
+      beta <- rep(1, 4)
+    } else if (grepl("sw_ucb", algorithm)) {
+      history <- list(arm = integer(), reward = numeric())
+    }
+
+    regrets <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      if (algorithm == "ucb") {
+        values <- ifelse(trials == 0, 1,
+                         success / trials + sqrt(2 * log(t) / trials))
+        a <- which.max(values)
+      } else if (algorithm == "ts") {
+        values <- rbeta(4, alpha, beta)
+        a <- which.max(values)
+      } else if (grepl("sw_ucb", algorithm)) {
+        values <- numeric(4)
+        for (i in 1:4) {
+          idx <- which(history$arm == i)
+          idx <- tail(idx, window_size)
+          n_trials <- length(idx)
+          s <- sum(history$reward[idx])
+          values[i] <- ifelse(n_trials == 0, 1, s/n_trials + sqrt(2 * log(t) / n_trials))
+        }
+        a <- which.max(values)
+      }
+
+      r <- rbinom(1, 1, prob = theta_vals_4[a])
+      regrets[t] <- optimal_probs[t] - r
+
+      if (algorithm == "ucb") {
+        success[a] <- success[a] + r
+        trials[a] <- trials[a] + 1
+      } else if (algorithm == "ts") {
+        alpha[a] <- alpha[a] + r
+        beta[a] <- beta[a] + (1 - r)
+      } else if (grepl("sw_ucb", algorithm)) {
+        history$arm <- c(history$arm, a)
+        history$reward <- c(history$reward, r)
+      }
+    }
+
+    regret_mat[, r] <- cumsum(regrets)
+  }
+
+  return(regret_mat)
+}
+
+regret_ucb_4 <- run_bandit_4arm("ucb")
+regret_ts_4 <- run_bandit_4arm("ts")
+regret_swucb_20 <- run_bandit_4arm("sw_ucb", window_size = 20)
+regret_swucb_50 <- run_bandit_4arm("sw_ucb", window_size = 50)
+
+t <- 1:n_bandit
+regret_df_4arm <- tibble(
+  t = rep(t, 4),
+  regret = c(rowMeans(regret_ucb_4),
+             rowMeans(regret_ts_4),
+             rowMeans(regret_swucb_20),
+             rowMeans(regret_swucb_50)),
+  sd = c(apply(regret_ucb_4, 1, sd),
+         apply(regret_ts_4, 1, sd),
+         apply(regret_swucb_20, 1, sd),
+         apply(regret_swucb_50, 1, sd)),
+  method = rep(c("UCB", "Thompson", "SW-UCB (20)", "SW-UCB (50)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_4arm, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret: UCB vs TS vs Sliding UCB (4 Arms)",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+In this more complex environment with four arms, we observe a clear shift in algorithm performance:
+
+-	UCB, Thompson Sampling, and Sliding Window UCB (window = 50) perform very similarly. All three show a consistent decrease in cumulative regret, indicating successful learning and adaptation despite the expanded action space.
+
+-	In contrast, Sliding Window UCB with a short window of 20 performs worse overall. Its regret stabilizes and even plateaus, suggesting that the algorithm struggles to retain enough information to accurately track the best arm in a more challenging exploration landscape.
+
+---
+A longer memory (e.g., window = 50) helps in environments with more arms and slower switching, while short windows may lead to underexploration or poor estimation due to overly aggressive forgetting.
+---
+
+
+# 12. Simulating Abrupt Switches
+
+To test how well the algorithms adapt to rapidly changing environments, we now simulate **abrupt switching dynamics**. This is done by modifying the transition matrix to increase the switching probability.
+
+We use:
+$$ P = \begin{bmatrix} 0.3 & 0.7 \\ 0.7 & 0.3 \end{bmatrix} $$
+
+This setup introduces **frequent state changes**, simulating more volatile environments. We compare UCB, Thompson Sampling, and Sliding Window UCB with windows of 20 and 50.
+
+```{r simulate-abrupt-switching, warning=FALSE}
+set.seed(2045)
+n_runs <- 1000
+n_bandit <- 500
+
+# Keep 4-arm success probabilities
+theta_vals_4 <- c(0.2, 0.4, 0.6, 0.8)
+
+# Abrupt switching transition matrix
+P_abrupt <- matrix(c(0.3, 0.7,
+                     0.7, 0.3), nrow = 2, byrow = TRUE)
+
+run_bandit_abrupt <- function(algorithm = "ucb", window_size = 20) {
+  regret_mat <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    states_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_abrupt[states_sim[t-1], ])
+    }
+
+    best_arm_by_state <- list(`1` = 4, `2` = 1)
+    optimal_probs <- sapply(states_sim, function(s) theta_vals_4[best_arm_by_state[[as.character(s)]]])
+
+    if (algorithm == "ucb") {
+      success <- rep(0, 4)
+      trials <- rep(0, 4)
+    } else if (algorithm == "ts") {
+      alpha <- rep(1, 4)
+      beta <- rep(1, 4)
+    } else if (grepl("sw_ucb", algorithm)) {
+      history <- list(arm = integer(), reward = numeric())
+    }
+
+    regrets <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      if (algorithm == "ucb") {
+        values <- ifelse(trials == 0, 1,
+                         success / trials + sqrt(2 * log(t) / trials))
+        a <- which.max(values)
+      } else if (algorithm == "ts") {
+        values <- rbeta(4, alpha, beta)
+        a <- which.max(values)
+      } else if (grepl("sw_ucb", algorithm)) {
+        values <- numeric(4)
+        for (i in 1:4) {
+          idx <- which(history$arm == i)
+          idx <- tail(idx, window_size)
+          n_trials <- length(idx)
+          s <- sum(history$reward[idx])
+          values[i] <- ifelse(n_trials == 0, 1, s/n_trials + sqrt(2 * log(t) / n_trials))
+        }
+        a <- which.max(values)
+      }
+
+      r <- rbinom(1, 1, prob = theta_vals_4[a])
+      regrets[t] <- optimal_probs[t] - r
+
+      if (algorithm == "ucb") {
+        success[a] <- success[a] + r
+        trials[a] <- trials[a] + 1
+      } else if (algorithm == "ts") {
+        alpha[a] <- alpha[a] + r
+        beta[a] <- beta[a] + (1 - r)
+      } else if (grepl("sw_ucb", algorithm)) {
+        history$arm <- c(history$arm, a)
+        history$reward <- c(history$reward, r)
+      }
+    }
+
+    regret_mat[, r] <- cumsum(regrets)
+  }
+
+  return(regret_mat)
+}
+
+regret_ucb_ab <- run_bandit_abrupt("ucb")
+regret_ts_ab <- run_bandit_abrupt("ts")
+regret_sw20_ab <- run_bandit_abrupt("sw_ucb", window_size = 20)
+regret_sw50_ab <- run_bandit_abrupt("sw_ucb", window_size = 50)
+
+t <- 1:n_bandit
+regret_df_abrupt <- tibble(
+  t = rep(t, 4),
+  regret = c(rowMeans(regret_ucb_ab),
+             rowMeans(regret_ts_ab),
+             rowMeans(regret_sw20_ab),
+             rowMeans(regret_sw50_ab)),
+  sd = c(apply(regret_ucb_ab, 1, sd),
+         apply(regret_ts_ab, 1, sd),
+         apply(regret_sw20_ab, 1, sd),
+         apply(regret_sw50_ab, 1, sd)),
+  method = rep(c("UCB", "Thompson", "SW-UCB (20)", "SW-UCB (50)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_abrupt, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret: Abrupt Switching (4 Arms)",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+With more frequent switching between reward states, the landscape becomes much more volatile - and the effect on algorithm performance is clear:
+
+-	Thompson Sampling shows the most stable and adaptive behavior, achieving the lowest cumulative regret. This reflects its inherent flexibility and ability to quickly adjust to changing reward distributions. (Although, note that its preformance is not significantly better.)
+
+- Sliding Window UCB (both 20 and 50) performs comparably to UCB, with window = 50 slightly outperforming window = 20. This suggests that a moderate memory span is sufficient to adapt quickly without overreacting to noise.
+
+-	Standard UCB could be seen as lagging behind all others, struggling to keep up with the fast switching due to its reliance on longer-term averages.
+
+---
+In environments with rapid change, Bayesian sampling methods like TS and memory-limited strategies like SW-UCB outperform traditional UCB by staying reactive and localized.
+---
+
+# 13. Non-Symmetric Transitions
+
+Next, we explore **non-symmetric transition dynamics** where the environment is **biased toward one state**. This tests whether algorithms can adapt when one arm tends to dominate more persistently.
+
+We use a biased transition matrix:
+$$ P = \begin{bmatrix} 0.9 & 0.1 \\ 0.4 & 0.6 \end{bmatrix} $$
+This means the environment tends to **remain longer in state 1**, favoring one arm more often.
+
+```{r simulate-non-symmetric, warning=FALSE}
+set.seed(2046)
+n_runs <- 1000
+n_bandit <- 500
+
+theta_vals_4 <- c(0.2, 0.4, 0.6, 0.8)
+
+# Non-symmetric transition matrix
+P_biased <- matrix(c(0.9, 0.1,
+                     0.4, 0.6), nrow = 2, byrow = TRUE)
+
+run_bandit_biased <- function(algorithm = "ucb", window_size = 20) {
+  regret_mat <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    states_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_biased[states_sim[t-1], ])
+    }
+
+    best_arm_by_state <- list(`1` = 4, `2` = 1)
+    optimal_probs <- sapply(states_sim, function(s) theta_vals_4[best_arm_by_state[[as.character(s)]]])
+
+    if (algorithm == "ucb") {
+      success <- rep(0, 4)
+      trials <- rep(0, 4)
+    } else if (algorithm == "ts") {
+      alpha <- rep(1, 4)
+      beta <- rep(1, 4)
+    } else if (grepl("sw_ucb", algorithm)) {
+      history <- list(arm = integer(), reward = numeric())
+    }
+
+    regrets <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      if (algorithm == "ucb") {
+        values <- ifelse(trials == 0, 1,
+                         success / trials + sqrt(2 * log(t) / trials))
+        a <- which.max(values)
+      } else if (algorithm == "ts") {
+        values <- rbeta(4, alpha, beta)
+        a <- which.max(values)
+      } else if (grepl("sw_ucb", algorithm)) {
+        values <- numeric(4)
+        for (i in 1:4) {
+          idx <- which(history$arm == i)
+          idx <- tail(idx, window_size)
+          n_trials <- length(idx)
+          s <- sum(history$reward[idx])
+          values[i] <- ifelse(n_trials == 0, 1, s/n_trials + sqrt(2 * log(t) / n_trials))
+        }
+        a <- which.max(values)
+      }
+
+      r <- rbinom(1, 1, prob = theta_vals_4[a])
+      regrets[t] <- optimal_probs[t] - r
+
+      if (algorithm == "ucb") {
+        success[a] <- success[a] + r
+        trials[a] <- trials[a] + 1
+      } else if (algorithm == "ts") {
+        alpha[a] <- alpha[a] + r
+        beta[a] <- beta[a] + (1 - r)
+      } else if (grepl("sw_ucb", algorithm)) {
+        history$arm <- c(history$arm, a)
+        history$reward <- c(history$reward, r)
+      }
+    }
+
+    regret_mat[, r] <- cumsum(regrets)
+  }
+
+  return(regret_mat)
+}
+
+# Run all algorithms under biased switching
+regret_ucb_bias <- run_bandit_biased("ucb")
+regret_ts_bias <- run_bandit_biased("ts")
+regret_sw20_bias <- run_bandit_biased("sw_ucb", window_size = 20)
+regret_sw50_bias <- run_bandit_biased("sw_ucb", window_size = 50)
+
+t <- 1:n_bandit
+regret_df_biased <- tibble(
+  t = rep(t, 4),
+  regret = c(rowMeans(regret_ucb_bias),
+             rowMeans(regret_ts_bias),
+             rowMeans(regret_sw20_bias),
+             rowMeans(regret_sw50_bias)),
+  sd = c(apply(regret_ucb_bias, 1, sd),
+         apply(regret_ts_bias, 1, sd),
+         apply(regret_sw20_bias, 1, sd),
+         apply(regret_sw50_bias, 1, sd)),
+  method = rep(c("UCB", "Thompson", "SW-UCB (20)", "SW-UCB (50)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_biased, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret: Non-Symmetric Transitions (4 Arms)",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+In this setting, one state is much more persistent than the other (via the asymmetric transition matrix), creating a biased environment favoring a single arm over time. The results reflect how each algorithm adapts to this structure:
+
+-	Thompson Sampling continues to outperform all others, with the lowest cumulative regret, indicating that its Bayesian updating allows it to quickly lock onto the dominant arm in a stable environment.
+-	UCB and Sliding Window UCB (50) show stable performance, hovering close to zero regret. This suggests they eventually identify the best arm and are not strongly misled by occasional state switches.
+
+-	Sliding Window UCB (20) performs slightly worse again. The short memory window may be discarding useful long-term trends in this biased environment, where past data is valuable.
+
+---
+In environments where the reward structure is unbalanced or persistent, methods like Thompson Sampling that incorporate uncertainty and longer memory (UCB, SW-UCB 50) have a clear advantage.
+---
+
+
+# 14a. Discounted UCB
+
+We now test a **Discounted UCB** variant, where older observations are **exponentially down-weighted**. This allows the algorithm to stay responsive in dynamic environments without using a hard cutoff like in Sliding Window UCB.
+
+We define the **discount factor** $\gamma \in (0, 1)$. Recent data gets weight $\approx 1$, older data gets weight $\gamma^t$.
+
+```{r discounted-ucb, warning=FALSE}
+set.seed(2047)
+n_runs <- 1000
+n_bandit <- 500
+
+theta_vals_4 <- c(0.2, 0.4, 0.6, 0.8)
+P_normal <- matrix(c(0.6, 0.4,
+                     0.4, 0.6), nrow = 2, byrow = TRUE)
+
+run_discounted_ucb <- function(gamma = 0.97) {
+  regret_mat <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    states_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_normal[states_sim[t-1], ])
+    }
+
+    best_arm_by_state <- list(`1` = 4, `2` = 1)
+    optimal_probs <- sapply(states_sim, function(s) theta_vals_4[best_arm_by_state[[as.character(s)]]])
+
+    # Initialize discounted stats
+    successes <- rep(0, 4)
+    weights <- rep(0, 4)
+
+    regrets <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      # Compute UCB with discounting
+      values <- ifelse(weights == 0, 1,
+                       successes / weights + sqrt(2 * log(t) / weights))
+      a <- which.max(values)
+
+      rwd <- rbinom(1, 1, theta_vals_4[a])
+      regrets[t] <- optimal_probs[t] - rwd
+
+      # Discount all past data
+      successes <- gamma * successes
+      weights <- gamma * weights
+
+      # Update current arm
+      successes[a] <- successes[a] + rwd
+      weights[a] <- weights[a] + 1
+    }
+
+    regret_mat[, r] <- cumsum(regrets)
+  }
+
+  return(regret_mat)
+}
+
+regret_ucb_std <- run_bandit_biased("ucb")
+regret_ts_std <- run_bandit_biased("ts")
+regret_sw20_std <- run_bandit_biased("sw_ucb", window_size = 20)
+regret_discucb <- run_discounted_ucb(gamma = 0.97)
+
+t <- 1:n_bandit
+regret_df_disc <- tibble(
+  t = rep(t, 4),
+  regret = c(rowMeans(regret_ucb_std),
+             rowMeans(regret_ts_std),
+             rowMeans(regret_sw20_std),
+             rowMeans(regret_discucb)),
+  sd = c(apply(regret_ucb_std, 1, sd),
+         apply(regret_ts_std, 1, sd),
+         apply(regret_sw20_std, 1, sd),
+         apply(regret_discucb, 1, sd)),
+  method = rep(c("UCB", "Thompson", "SW-UCB (20)", "Discounted-UCB"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_disc, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret: Discounted UCB vs Baselines",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+
+# 14b. Fixing Discounted UCB
+
+Let's revise our implementation of **Discounted UCB** to ensure that recent information is properly weighted without prematurely discounting new observations.
+
+Key adjustments:
+- **Discount after update** instead of before.
+- Maintain **discounted rewards and counts** separately for stability.
+- **Fix regret calculation**: Regret is always \( \text{optimal reward} - \text{observed reward} \)
+
+```{r fixed-discounted-ucb, warning=FALSE}
+run_discounted_ucb_fixed <- function(gamma = 0.99) {
+  regret_mat <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    states_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_normal[states_sim[t-1], ])
+    }
+
+    best_arm_by_state <- list(`1` = 4, `2` = 1)
+    optimal_probs <- sapply(states_sim, function(s) theta_vals_4[best_arm_by_state[[as.character(s)]]])
+
+    rew <- rep(0, 4)
+    count <- rep(0, 4)
+
+    regrets <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      ucb <- ifelse(count == 0, 1,
+                   rew / count + sqrt(2 * log(t + 1) / count))
+      a <- which.max(ucb)
+
+      rwd <- rbinom(1, 1, theta_vals_4[a])
+
+      # FIXED REGRET CALCULATION
+      regrets[t] <- optimal_probs[t] - theta_vals_4[a]  # always optimal - played arm's mean
+
+      # Discount all arms
+      rew <- gamma * rew
+      count <- gamma * count
+
+      # Update played arm
+      rew[a] <- rew[a] + rwd
+      count[a] <- count[a] + 1
+    }
+
+    regret_mat[, r] <- cumsum(regrets)
+  }
+
+  return(regret_mat)
+}
+
+regret_discucb_fix <- run_discounted_ucb_fixed(gamma = 0.99)
+
+regret_df_discfix <- tibble(
+  t = rep(t, 4),
+  regret = c(rowMeans(regret_ucb_std),
+             rowMeans(regret_ts_std),
+             rowMeans(regret_sw20_std),
+             rowMeans(regret_discucb_fix)),
+  sd = c(apply(regret_ucb_std, 1, sd),
+         apply(regret_ts_std, 1, sd),
+         apply(regret_sw20_std, 1, sd),
+         apply(regret_discucb_fix, 1, sd)),
+  method = rep(c("UCB", "Thompson", "SW-UCB (20)", "Discounted-UCB (Fixed)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_discfix, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret: Discounted UCB (Fixed) vs Baselines",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+
+
+# 14c. Discounted UCB with State-Aligned Optimal Reward
+
+We now revise the regret calculation to explicitly account for the current **latent state**. This ensures we always compare against the **best arm given the state**, rather than against a global best.
+
+```{r discounted-ucb-state-aligned, warning=FALSE}
+run_discounted_ucb_state_aligned <- function(gamma = 0.99) {
+  regret_mat <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+  for (r in 1:n_runs) {
+    # Simulate Markov states
+    states_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_normal[states_sim[t - 1], ])
+    }
+
+    # Best arm per state (example: state 1 → arm 4, state 2 → arm 1)
+    best_arm_by_state <- list(`1` = 4, `2` = 1)
+
+    rew <- rep(0, 4)
+    count <- rep(0, 4)
+    regrets <- numeric(n_bandit)
+
+    for (t in 1:n_bandit) {
+      s <- states_sim[t]
+      best_prob <- theta_vals_4[best_arm_by_state[[as.character(s)]]]
+
+      # Calculate UCB
+      ucb <- ifelse(count == 0, 1,
+                   rew / count + sqrt(2 * log(t + 1) / count))
+      a <- which.max(ucb)
+
+      reward <- rbinom(1, 1, theta_vals_4[a])
+      regrets[t] <- best_prob - theta_vals_4[a]
+
+      # Discount all stats
+      rew <- gamma * rew
+      count <- gamma * count
+
+      # Update played arm
+      rew[a] <- rew[a] + reward
+      count[a] <- count[a] + 1
+    }
+
+    regret_mat[, r] <- cumsum(regrets)
+  }
+
+  return(regret_mat)
+}
+
+regret_discucb_state <- run_discounted_ucb_state_aligned(gamma = 0.99)
+
+regret_df_discstate <- tibble(
+  t = rep(t, 5),
+  regret = c(rowMeans(regret_ucb_std),
+             rowMeans(regret_ts_std),
+             rowMeans(regret_sw20_std),
+             rowMeans(regret_discucb_fix),
+             rowMeans(regret_discucb_state)),
+  sd = c(apply(regret_ucb_std, 1, sd),
+         apply(regret_ts_std, 1, sd),
+         apply(regret_sw20_std, 1, sd),
+         apply(regret_discucb_fix, 1, sd),
+         apply(regret_discucb_state, 1, sd)),
+  method = rep(c("UCB", "Thompson", "SW-UCB (20)", "Discounted-UCB (Fixed)", "Discounted-UCB (StateAligned)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_discstate, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret: Discounted UCB (State-Aligned) vs Baselines",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+Discounted-UCB (StateAligned) now behaves logically — it starts with higher regret (due to exploration) but eventually adapts and drives cumulative regret sharply downward, even below zero (more on that below).
+
+The standard baselines (UCB, TS, SW-UCB) remain flat at zero, as expected with consistent state-aware regret.
+
+Interestingly, both Discounted-UCB versions overtake the oracle on average later in time — this could mean they:
+
+-	Lock into a good arm more aggressively than the state-based switching optimal arm.
+
+-	Or, more likely: there’s a mismatch between the simulation’s latent state and what we assume to be the “best” at each time.
+
+
+# 15. Different Reward Factors
+
+Now we explore how different reward gaps between arms affect algorithm performance. We simulate a 4-arm environment with more subtle differences:
+
+```{r simulate-small-gap-rewards, warning=FALSE}
+# Define smaller reward gap between arms
+theta_vals_small_gap <- c(0.55, 0.5, 0.45, 0.4)
+
+# Use the same transition matrix as before (e.g., P_normal)
+
+# Simulate 1000 runs and store regret curves
+run_bandits_with_gap <- function(reward_probs) {
+  regret_ucb <- matrix(0, n_bandit, n_runs)
+  regret_ts <- matrix(0, n_bandit, n_runs)
+  regret_sw20 <- matrix(0, n_bandit, n_runs)
+
+  for (r in 1:n_runs) {
+    # Simulate latent states
+    states_sim <- numeric(n_bandit)
+    states_sim[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states_sim[t] <- sample(1:2, 1, prob = P_normal[states_sim[t - 1], ])
+    }
+
+    best_arm_by_state <- list(`1` = 1, `2` = 1)  # Arm 1 best in both
+    optimal_probs <- sapply(states_sim, function(s) reward_probs[best_arm_by_state[[as.character(s)]]])
+
+    simulate_algos <- function(strategy_fun) {
+      rew <- rep(0, 4)
+      count <- rep(0, 4)
+      regrets <- numeric(n_bandit)
+      for (t in 1:n_bandit) {
+        a <- strategy_fun(rew, count, t)
+        reward <- rbinom(1, 1, reward_probs[a])
+        regrets[t] <- optimal_probs[t] - reward_probs[a]
+        rew[a] <- rew[a] + reward
+        count[a] <- count[a] + 1
+      }
+      cumsum(regrets)
+    }
+
+    regret_ucb[, r] <- simulate_algos(function(r, c, t) {
+      ucb <- ifelse(c == 0, 1, r / c + sqrt(2 * log(t + 1) / c))
+      which.max(ucb)
+    })
+
+    regret_ts[, r] <- simulate_algos(function(r, c, t) {
+      alpha <- 1 + r
+      beta <- 1 + c - r
+      which.max(rbeta(4, alpha, beta))
+    })
+
+    regret_sw20[, r] <- simulate_algos(function(r, c, t) {
+      recent <- max(1, t - 20 + 1):t
+      arm_rewards <- sapply(1:4, function(a) {
+        rew <- 0; n <- 0
+        for (i in recent) {
+          if (a == which.max(rbeta(4, 1 + r, 1 + c - r))) {
+            rew <- rew + 1; n <- n + 1
+          }
+        }
+        if (n == 0) return(1) else return(rew / n + sqrt(2 * log(t + 1) / n))
+      })
+      which.max(arm_rewards)
+    })
+  }
+
+  list(ucb = regret_ucb, ts = regret_ts, sw = regret_sw20)
+}
+
+regrets_small_gap <- run_bandits_with_gap(theta_vals_small_gap)
+
+regret_df_gap <- tibble(
+  t = rep(t, 3),
+  regret = c(rowMeans(regrets_small_gap$ts),
+             rowMeans(regrets_small_gap$ucb),
+             rowMeans(regrets_small_gap$sw)),
+  sd = c(apply(regrets_small_gap$ts, 1, sd),
+         apply(regrets_small_gap$ucb, 1, sd),
+         apply(regrets_small_gap$sw, 1, sd)),
+  method = rep(c("Thompson", "UCB", "SW-UCB (20)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_gap, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret under Smaller Reward Gaps",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+This experiment simulates a 4-armed bandit with narrow gaps between arm success probabilities:
+$[0.55,\ 0.5,\ 0.45,\ 0.4]$
+
+In such settings:
+
+Thompson Sampling (green) performs significantly better, with much lower cumulative regret across time. It benefits from its Bayesian exploration-exploitation tradeoff, allowing it to resolve subtle differences between arms more efficiently.
+
+UCB (blue) and Sliding Window UCB (red) show higher regret, especially in early steps.
+
+-	This is because UCB’s confidence bounds are more optimistic and less adaptive when differences are small.
+
+-	Sliding Window UCB is slightly better early on (quicker adaptation), but ultimately converges to similar performance as UCB, indicating its limitation in this tighter reward environment.
+
+---
+- Narrow reward gaps are hard: Distinguishing between 0.55 and 0.5 takes many more samples, and strategies that rely heavily on confidence intervals (like UCB) may struggle.
+
+-	Thompson Sampling wins in low signal-to-noise environments because it naturally incorporates uncertainty.
+---
+
+
+# 16. Reward Gap Shrinkage
+
+Now, we try even smaller gaps: `[0.51, 0.5, 0.49, 0.48]` to examine how algorithms perform when the arms are nearly indistinguishable.
+
+```{r simulate-tiny-gap-rewards, warning=FALSE}
+theta_vals_tiny_gap <- c(0.51, 0.5, 0.49, 0.48)
+
+regrets_tiny_gap <- run_bandits_with_gap(theta_vals_tiny_gap)
+
+regret_df_tiny <- tibble(
+  t = rep(t, 3),
+  regret = c(rowMeans(regrets_tiny_gap$ts),
+             rowMeans(regrets_tiny_gap$ucb),
+             rowMeans(regrets_tiny_gap$sw)),
+  sd = c(apply(regrets_tiny_gap$ts, 1, sd),
+         apply(regrets_tiny_gap$ucb, 1, sd),
+         apply(regrets_tiny_gap$sw, 1, sd)),
+  method = rep(c("Thompson", "UCB", "SW-UCB (20)"), each = n_bandit)
+) %>%
+  mutate(lower = regret - 1.96 * sd / sqrt(n_runs),
+         upper = regret + 1.96 * sd / sqrt(n_runs))
+
+ggplot(regret_df_tiny, aes(x = t, y = regret, color = method, fill = method)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  labs(title = "Cumulative Regret under Extremely Small Reward Gaps",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
+All algorithms accumulate regret more slowly than before, but the differences between arms are so small that distinguishing the best one becomes very difficult, especially early on.
+
+UCB performs worst in this setting. It explores longer due to high uncertainty, which leads to more regret accumulation over time.
+
+Thompson Sampling performs better, adapting faster to subtle differences between arms. It maintains a consistently lower regret than UCB.
+
+Sliding Window UCB (window = 20) surprisingly performs best.
+
+-	This suggests that focusing only on recent rewards helps in environments where gaps are minimal and noisy exploration would otherwise dominate.
+
+-	It avoids overcommitting to long-term averages that don’t help in detecting small variations quickly.
+
+
+
+# 17. Time-Varying Within Arm-Rewards
+
+
+
+
+# 18. Adding a Fifth Arm
+
+
+
+
+# 19. Non-Stationary Rewards 
+
+
+
+
+
+
 
 
 

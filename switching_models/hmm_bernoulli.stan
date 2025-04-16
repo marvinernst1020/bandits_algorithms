@@ -1,5 +1,6 @@
 //
-// HMM - BERNOULLI
+// HMM - BERNOULLI 
+// (this is a tuned version of the MSM)
 //
 
 data {
