@@ -1499,6 +1499,171 @@ Sliding Window UCB (window = 20) surprisingly performs best.
 
 # 17. Time-Varying Within Arm-Rewards
 
+```{r}
+# 17 Hamilton Markov‑Switching Autoregressive based on the James Douglas book. Formulations :
+# — Stationary case: fixed p1,p2
+set.seed(42)
+n_bandit <- 500
+n_runs   <- 200
+p1 <- 0.7
+p2 <- 0.3
+best_prob <- pmax(p1,p2)
+
+# storage
+reg_ucb_stat <- reg_ts_stat <- reg_sw_stat <- 
+  array(0, c(n_bandit, n_runs))
+```
+
+```{r}
+for(r in 1:n_runs){
+  # initialize stats
+  succ_ucb <- tr_ucb <- c(0,0)
+  alpha_ts <- beta_ts <- c(1,1)
+  history  <- list(arm=integer(), reward=numeric())
+  cum_ucb <- cum_ts <- cum_sw <- 0
+  regs_ucb <- regs_ts <- regs_sw <- numeric(n_bandit)
+  
+  for(t in 1:n_bandit){
+    probs <- c(p1, p2)
+    
+    # UCB
+    ucbv <- ifelse(tr_ucb==0, 1,
+                   succ_ucb/tr_ucb + sqrt(2*log(t)/tr_ucb))
+    a_ucb <- which.max(ucbv)
+    r_ucb <- rbinom(1,1,probs[a_ucb])
+    tr_ucb[a_ucb]   <- tr_ucb[a_ucb]   + 1
+    succ_ucb[a_ucb] <- succ_ucb[a_ucb] + r_ucb
+    cum_ucb <- cum_ucb + (best_prob - probs[a_ucb])
+    regs_ucb[t] <- cum_ucb
+    
+    # Thompson
+    draw_ts <- rbeta(2, alpha_ts, beta_ts)
+    a_ts    <- which.max(draw_ts)
+    r_ts    <- rbinom(1,1,probs[a_ts])
+    alpha_ts[a_ts] <- alpha_ts[a_ts] + r_ts
+    beta_ts[a_ts]  <- beta_ts[a_ts]  + (1 - r_ts)
+    cum_ts <- cum_ts + (best_prob - probs[a_ts])
+    regs_ts[t] <- cum_ts
+    
+    # Sliding‑Window UCB (W=50)
+    W <- 50
+    swv <- numeric(2)
+    for(a in 1:2){
+      idx <- tail(which(history$arm==a), W)
+      ntr <- length(idx); nsu <- sum(history$reward[idx])
+      swv[a] <- if(ntr==0) 1 else nsu/ntr + sqrt(2*log(t)/ntr)
+    }
+    a_sw   <- which.max(swv)
+    r_sw   <- rbinom(1,1,probs[a_sw])
+    history$arm    <- c(history$arm, a_sw)
+    history$reward <- c(history$reward, r_sw)
+    cum_sw <- cum_sw + (best_prob - probs[a_sw])
+    regs_sw[t] <- cum_sw
+  }
+  
+  reg_ucb_stat[,r] <- regs_ucb
+  reg_ts_stat[,r]  <- regs_ts
+  reg_sw_stat[,r]  <- regs_sw
+}
+
+# summarize & plot
+df_stat <- tibble(
+  t       = 1:n_bandit,
+  UCB     = rowMeans(reg_ucb_stat),
+  Thompson= rowMeans(reg_ts_stat),
+  SW_UCB  = rowMeans(reg_sw_stat)
+) %>% pivot_longer(-t, names_to="Method", values_to="CumulativeRegret")
+
+ggplot(df_stat, aes(t, CumulativeRegret, color=Method)) +
+  geom_line() +
+  labs(
+    title="Stationary Case: Avg. Cumulative Regret",
+    x="Time", y="Cumulative Regret"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Here im only doing for 2 arms, maybe i should be running this for more arms like 4. We can always change easily
+sim <- simulate_p()      
+arm1 <- sim$p 
+arm2 <- simulate_p()$p
+best <- ifelse(arm1>arm2,1,2)
+
+# run one bandit experiment, storing decisions
+n <- length(arm1)
+ucb_choice <- ts_choice <- sw_choice <- integer(n)
+ucb_reward <- ts_reward <- sw_reward <- integer(n)
+
+# initialize...
+succ_ucb <- tr_ucb <- c(0,0)
+alpha_ts <- beta_ts <- c(1,1)
+history <- list(arm=integer(), reward=numeric())
+
+for(t in 1:n){
+  probs <- c(arm1[t],arm2[t])
+  best[t] <- which.max(probs)
+  # UCB
+  vals <- ifelse(tr_ucb==0,1,succ_ucb/tr_ucb+sqrt(2*log(t)/tr_ucb))
+  a <- which.max(vals); ucb_choice[t]<-a
+  r <- rbinom(1,1,probs[a]); ucb_reward[t]<-r
+  succ_ucb[a]<-succ_ucb[a]+r; tr_ucb[a]<-tr_ucb[a]+1
+  # TS
+  d <- rbeta(2,alpha_ts,beta_ts); a<-which.max(d); ts_choice[t]<-a
+  r <- rbinom(1,1,probs[a]); ts_reward[t]<-r
+  alpha_ts[a]<-alpha_ts[a]+r; beta_ts[a]<-beta_ts[a]+(1-r)
+  # SW‑UCB(50)
+  W<-50; swv<-numeric(2)
+  for(a in 1:2){
+    idx <- tail(which(history$arm==a),W); ntr<-length(idx)
+    swv[a]<- if(ntr==0) 1 else sum(history$reward[idx])/ntr+sqrt(2*log(t)/ntr)
+  }
+  a<-which.max(swv); sw_choice[t]<-a
+  r<-rbinom(1,1,probs[a]); sw_reward[t]<-r
+  history$arm    <- c(history$arm,a)
+  history$reward <- c(history$reward,r)
+}
+
+df_steps <- data.frame(
+  t       = 1:n,
+  p1      = round(arm1,3),
+  p2      = round(arm2,3),
+  best    = best,
+  UCB_arm = ucb_choice, UCB_r = ucb_reward,
+  TS_arm  = ts_choice,  TS_r = ts_reward,
+  SW_arm  = sw_choice,  SW_r = sw_reward
+)
+kable(head(df_steps,10), caption="First 10 Decisions of Each Algorithm")
+```
+
+```{r}
+df_plot <- data.frame(
+  t=1:n,
+  p1=arm1, p2=arm2,
+  UCB=ucb_choice,
+  TS=ts_choice,
+  SW=sw_choice
+)
+
+ggplot(df_plot, aes(t)) +
+  geom_line(aes(y=p1), color="blue") +
+  geom_line(aes(y=p2), color="red") +
+  geom_point(aes(y=0.05, color=factor(UCB)), shape=15, size=1, alpha=0.6) +
+  labs(y="p", color="UCB choice") +
+  theme_minimal()
+```
+```{r}
+acc_ucb <- cumsum(ucb_choice==best)/(1:n)
+acc_ts  <- cumsum(ts_choice==best)/(1:n)
+acc_sw  <- cumsum(sw_choice==best)/(1:n)
+df_acc  <- data.frame(t=1:n, UCB=acc_ucb, TS=acc_ts, SW=acc_sw)
+df_acc_long <- reshape2::melt(df_acc, "t")
+
+ggplot(df_acc_long, aes(t, value, color=variable)) +
+  geom_line() +
+  labs(y="Cumulative Accuracy", title="How Often Each Algorithm Picks the Best Arm") +
+  theme_minimal()
+```
 
 
 
@@ -1509,8 +1674,139 @@ Sliding Window UCB (window = 20) surprisingly performs best.
 
 # 19. Non-Stationary Rewards 
 
+Here I'm doing Non‑Stationary Rewards driven by James Hamilton’s Markov‑Switching Autoregressive thingie in the book.
+
+Initializing these params do we can use the Markov‑Switching Autoregressive model.
+```{r}
+set.seed(2051)
+T  <- 500    
+R  <- 200    
+W  <- 50    
+
+# Markov‑Switching Autoregressive params for each of 4 arms
+P_list <- list(
+  matrix(c(0.9,0.1,0.1,0.9),   2,2),
+  matrix(c(0.85,0.15,0.15,0.85),2,2),
+  matrix(c(0.8,0.2,0.2,0.8),   2,2),
+  matrix(c(0.95,0.05,0.05,0.95),2,2)
+)
+mu_list    <- list(c(-1,1), c(0,2), c(-0.5,1.5), c(0.5,-1))
+phi_list   <- c(0.8, 0.9, 0.85, 0.7)
+sigma_list <- c(0.3, 0.2, 0.25, 0.4)
+
+simulate_arm <- function(P, mu, phi, sigma){
+  s <- numeric(T); z <- numeric(T)
+  s[1] <- sample(1:2,1)
+  z[1] <- rnorm(1, mu[s[1]], sigma/sqrt(1-phi^2))
+  for(t in 2:T){
+    s[t] <- sample(1:2,1, prob=P[s[t-1],])
+    z[t] <- mu[s[t]] + phi*(z[t-1]-mu[s[t]]) + sigma*rnorm(1)
+  }
+  plogis(z)
+}
+
+```
 
 
+
+```{r}
+# cumulative regret
+reg_ucb <- reg_ts <- reg_sw <- array(0, c(T, R))
+# choices (arm index) and best arm
+ucb_choice <- ts_choice <- sw_choice <- matrix(NA, nrow=T, ncol=R)
+best_arm    <- matrix(NA, nrow=T, ncol=R)
+
+for(r in seq_len(R)){
+  # simulate arms
+  p_mat <- sapply(1:4, function(i)
+    simulate_arm(P_list[[i]], mu_list[[i]],
+                 phi_list[i], sigma_list[i])
+  )
+  best_arm[,r] <- apply(p_mat, 1, which.max)
+  
+  # init
+  succ_ucb <- tr_ucb <- numeric(4)
+  alpha_ts <- beta_ts <- rep(1,4)
+  history <- list(arm=integer(), reward=numeric())
+  cum_ucb <- cum_ts <- cum_sw <- 0
+  
+  for(t in seq_len(T)){
+    probs <- p_mat[t,]
+    ucbv <- ifelse(tr_ucb==0, 1,
+                   succ_ucb/tr_ucb + sqrt(2*log(t)/tr_ucb))
+    a_ucb <- which.max(ucbv)
+    ucb_choice[t,r] <- a_ucb
+    rwd <- rbinom(1,1,probs[a_ucb])
+    tr_ucb[a_ucb]   <- tr_ucb[a_ucb] + 1
+    succ_ucb[a_ucb] <- succ_ucb[a_ucb] + rwd
+    cum_ucb <- cum_ucb + (probs[best_arm[t,r]] - probs[a_ucb])
+    reg_ucb[t,r] <- cum_ucb
+  
+    draw_ts <- rbeta(4, alpha_ts, beta_ts)
+    a_ts <- which.max(draw_ts)
+    ts_choice[t,r] <- a_ts
+    rwd <- rbinom(1,1,probs[a_ts])
+    alpha_ts[a_ts] <- alpha_ts[a_ts] + rwd
+    beta_ts[a_ts]  <- beta_ts[a_ts] + (1-rwd)
+    cum_ts <- cum_ts + (probs[best_arm[t,r]] - probs[a_ts])
+    reg_ts[t,r] <- cum_ts
+    
+    swv <- numeric(4)
+    for(a in 1:4){
+      idx <- tail(which(history$arm==a), W)
+      ntr <- length(idx); nsu <- sum(history$reward[idx])
+      # use if-else syntax:
+      swv[a] <- if(ntr==0) 1 else nsu/ntr + sqrt(2*log(t)/ntr)
+    }
+    a_sw <- which.max(swv)
+    sw_choice[t,r] <- a_sw
+    rwd <- rbinom(1,1,probs[a_sw])
+    history$arm    <- c(history$arm, a_sw)
+    history$reward <- c(history$reward, rwd)
+    cum_sw <- cum_sw + (probs[best_arm[t,r]] - probs[a_sw])
+    reg_sw[t,r] <- cum_sw
+  }
+}
+```
+
+```{r}
+df_reg <- tibble(
+  time     = 1:T,
+  UCB      = rowMeans(reg_ucb),
+  Thompson = rowMeans(reg_ts),
+  SW_UCB   = rowMeans(reg_sw)
+) %>% pivot_longer(-time, names_to="Method", values_to="CumulativeRegret")
+
+p1 <- ggplot(df_reg, aes(time, CumulativeRegret, color=Method)) +
+  geom_line(size=1) +
+  labs(
+    title="Avg. CumulativeRegret under Markov‑Switching Autoregressive (4 Arms)",
+    x="Time", y="CumulativeRegret"
+  ) +
+  theme_minimal()
+
+acc_df <- tibble(
+  time     = 1:T,
+  UCB      = rowMeans(ucb_choice == best_arm),
+  Thompson = rowMeans(ts_choice  == best_arm),
+  SW_UCB   = rowMeans(sw_choice  == best_arm)
+) %>% pivot_longer(-time, names_to="Method", values_to="Accuracy")
+
+p2 <- ggplot(acc_df, aes(time, Accuracy, color=Method)) +
+  geom_line(size=1) +
+  labs(
+    title="Per‑Step Optimal‑Arm Accuracy",
+    x="Time", y="Accuracy"
+  ) +
+  theme_minimal()
+
+print(p1)
+```
+```{r}
+print(p2)
+```
+
+The algorithm whose accuracy dips the least (and recovers fastest) is the most responsive to change. this being ubc makes a lot of sense.
 
 
 
