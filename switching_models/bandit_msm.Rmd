@@ -1,6 +1,6 @@
 ---
 title: "Bandit Algorithms in a Markov Switching Environment"
-author: "Marvin Ernst & Oriol Gelabert"
+author: "Marvin Ernst & Oriol Gelabert & Melisa Vadenja"
 date: "2025-04-13"
 output: html_document
 editor_options: 
@@ -1621,7 +1621,7 @@ print(p2)
 ```
 
 The algorithm whose accuracy dips the least (and recovers fastest) is the most responsive to change. this being ubc makes a lot of sense.
-
+###these need further commenting.
 
 
 
