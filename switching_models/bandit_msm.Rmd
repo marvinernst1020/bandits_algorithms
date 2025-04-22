@@ -28,310 +28,11 @@ options(mc.cores = parallel::detectCores()) # use all cores
 ```
 
 
-# 1. Simulate Markov Switching Model (MSM)
+# 1. Generating Simulated State Transitions
 
-We simulate a 2-state MSM where:
-- State 1: $\pi_1 = 0.8$ (high success)
-- State 2: $\pi_2 = 0.2$ (low success)
-- Transition matrix:
-  $\begin{bmatrix} 0.9 & 0.1 \\ 0.1 & 0.9 \end{bmatrix}$
-
-```{r simulate-msm}
-set.seed(42)
-n <- 500
-states <- numeric(n)
-y <- numeric(n)
-
-# Transition matrix
-P <- matrix(c(0.9, 0.1,
-              0.1, 0.9), nrow = 2, byrow = TRUE)
-
-# State-dependent success probabilities
-pi_vals <- c(0.8, 0.2)
-states[1] <- 1
-for (t in 2:n) {
-  states[t] <- sample(1:2, 1, prob = P[states[t-1], ])
-}
-y <- rbinom(n, size = 1, prob = pi_vals[states])
-
-data_msm <- tibble(t = 1:n, state = states, y = y)
-stan_data <- list(N = n, y = y)
-```
-
-# 2. Estimate Parameters Using Stan
-
-```{r}
-fit <- stan(file = "msm_bernoulli.stan",
-            data = stan_data,
-            iter = 2000,
-            warmup = 1000,
-            chains = 4,
-            seed = 123)
-```
-
-```{r}
-print(fit, pars = c("pi", "p"))
-```
-
-pi[1] and pi[2] are the mixture proportions, i.e., how often the model believes the system is in state 1 vs state 2.
-
-Our model is unsure about which state dominates – it splits the weight evenly. This is expected since:
-
-- We gave it no state labels.
-
-- The success probabilities p[1] and p[2] are very similar. 
-
-The model couldn’t clearly separate the states, and estimates both states with similar success probabilities (~0.55), centered between 0.8 and 0.2.
-
-**Why didn’t the model recover the true parameters?**
-
-Possible Reasons:
-
-1.	Label switching: The model doesn’t know which state is “state 1” vs “state 2” — it’s symmetric. You just get a mix of the two.
-	
-2.	No time structure: The Stan model was a mixture model, not a full Markov switching model. So it didn’t learn the transition matrix or sequence of states.
-	
-3.	Identifiability: Without constraints or state information, the model can’t confidently tell apart the two distributions.
-	
-	
-Saving the model (to avoid recompiling every time):
-```{r}
-saveRDS(fit, "fit_msm_model.rds")
-```
-
-```{r}
-fit <- readRDS("fit_msm_model.rds")
-```
-
-
-# 3. Simulate Hidden Markov Model (HMM)
-
-```{r simulate-hmm}
-data_hmm <- tibble(t = 1:n, state = states, y = y)
-```
-
-Fit HMM with rstan:
-
-```{r fit-hmm-stan, eval=FALSE}
-fit <- stan(file = "hmm_bernoulli.stan",
-            data = stan_data,
-            iter = 2000,
-            warmup = 1000,
-            chains = 4,
-            seed = 123,
-            control = list(adapt_delta = 0.99, 
-                           max_treedepth = 15))
-```
-
-## Interpret Parameters
-
-- `init`: estimated initial state probabilities.
-
-- `trans`: estimated transition matrix between states.
-
-- `theta`: estimated success probabilities in each state.
-
-```{r}
-print(fit, pars = c("init", "trans", "theta"))
-```
-
-### Third Version - this is what we **currently** observe:
-
-This version shows that we have significantly improved the model’s performance and stability compared to previous attempts. By reparameterizing the emission probabilities using a logit transformation (theta[1] = inv_logit(alpha), theta[2] = inv_logit(alpha + delta)) and adding informative priors on the transition matrix and emission separation, the sampler is now able to:
-
-- Converge cleanly across all chains (Rhat = 1.00)
-
--	Avoid divergent transitions entirely
-
--	Accurately recover the true transition probabilities and emission values used in the simulation:
-
--	$\theta_1 \approx 0.2$, $\theta_2 \approx 0.8$
-
--	$P_{11} \approx 0.9$, $P_{22} \approx 0.9$
-
-In contrast to earlier versions where the sampler was unstable (high Rhat, low n_eff, divergences), this version demonstrates that reparameterization and identifiability constraints are crucial when working with Hidden Markov Models in Stan.
-
-This model can now serve as a stable basis for simulating environments and evaluating bandit algorithms in non-stationary, partially observed settings.
-
-### Second Version - after some improvements:
-
-Right now, Stan is struggling because:
-
-- It’s unsure how to separate the emission probabilities.
-
--	There’s still symmetry in the model.
-
-So let’s do two concrete things that will almost always help:
-
-1. Add Informative Priors to Help Identify States
-
-2. Add Priors on Transition Probabilities
-
-### First Version - this is what we observed before doing any improvements:
-
-These transition probabilities correctly recover the transition matrix we simulated!
-
-Issues: We have a very low n_eff and High Rhat!
-
-So, our chains did not mix well. The sampler is very uncertain about what the success probabilities should be. It’s likely stuck in different modes or swapping labels (more below).
-
-Our model likely suffers from label switching — the sampler can’t tell whether:
-
--	State 1 is the “high success” state, or
-
-- State 2 is the “high success” state
-
-It keeps switching during sampling, making the average estimates look like:
-
-$$
-theta[1] ≈ 0.47 \\
-
-theta[2] ≈ 0.47
-$$
-even though the true values were 0.8 and 0.2.
-
-1. We will now orce the model to order the theta values so it breaks the symmetry. 
-
-This ensures:
-$$\theta[1] < \theta[2]$$
-or vice versa, depending on your interpretation.
-
-This does not affect inference, but ensures consistent labeling across chains.
-
-2. We change the sampler by adding:
-
-control = list(adapt_delta = 0.99, max_treedepth = 15)
-
-
-# 4. Generating Simulated Data using the Stan Model
-
-We fit a 2-state Bernoulli HMM, which is a special case of a Markov Switching Model. Now, we can use the estimated parameters from the fitted model to generate a new synthetic dataset that mimics the regime-switching structure observed in the original simulation.
-
+We will start generating state transitions that will guide the probabilities of each arm of the bandit problem. We initiate using a stable setup where the probability of transition is low (10 %) and the transitions between states are not very frequent (We directly define a transition matrix).
 ```{r generate-simulated-hmm-data}
-# Extract posterior means from fit
-posterior <- rstan::extract(fit)
-init_prob <- colMeans(posterior$init)
-trans_mat <- apply(posterior$trans, c(2,3), mean)
-theta_vals <- colMeans(posterior$theta)
-
-# Simulate new state sequence and observations
-set.seed(2025)
-n_sim <- 500
-states_sim <- numeric(n_sim)
-y_sim <- numeric(n_sim)
-
-# Initial state
-states_sim[1] <- sample(1:2, 1, prob = init_prob)
-
-# Forward simulation
-for (t in 2:n_sim) {
-  states_sim[t] <- sample(1:2, 1, prob = trans_mat[states_sim[t-1], ])
-}
-
-# Generate observations
-for (t in 1:n_sim) {
-  y_sim[t] <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
-}
-
-simulated_data <- tibble(t = 1:n_sim, state = states_sim, y = y_sim)
-head(simulated_data)
-```
-
-
-# 5. Bandit Algorithms (UCB and Thompson Sampling)
-
-(Note: We call the tuned UCB version simply "UCB" from now on.)
-
-```{r bandit-algorithms}
-# Initialize storage
-n_bandit <- n_sim
-ucb_rewards <- numeric(n_bandit)
-ts_rewards <- numeric(n_bandit)
-
-# True probabilities (hidden from bandit)
-p_true <- theta_vals[states_sim]
-
-# UCB parameters
-ucb_success <- rep(0, 2)
-ucb_trials <- rep(0, 2)
-
-# Thompson parameters
-ts_alpha <- rep(1, 2)
-ts_beta <- rep(1, 2)
-
-for (t in 1:n_bandit) {
-  # UCB selection (tuned version)
-  ucb_values <- ifelse(
-    ucb_trials == 0,
-    1,
-    ucb_success / ucb_trials + 
-      sqrt(2 * log(t) / ucb_trials)
-  )
-  a_ucb <- which.max(ucb_values)
-  r_ucb <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
-  ucb_rewards[t] <- r_ucb
-  ucb_success[a_ucb] <- ucb_success[a_ucb] + r_ucb
-  ucb_trials[a_ucb] <- ucb_trials[a_ucb] + 1
-
-  # Thompson Sampling selection
-  ts_draws <- rbeta(2, ts_alpha, ts_beta)
-  a_ts <- which.max(ts_draws)
-  r_ts <- rbinom(1, 1, prob = theta_vals[states_sim[t]])
-  ts_rewards[t] <- r_ts
-  ts_alpha[a_ts] <- ts_alpha[a_ts] + r_ts
-  ts_beta[a_ts] <- ts_beta[a_ts] + (1 - r_ts)
-}
-
-# Compute cumulative regret (assuming oracle knows true best arm at each t)
-best_arm_probs <- pmax(theta_vals[states_sim], 1 - theta_vals[states_sim])
-ucb_regret <- cumsum(best_arm_probs - ucb_rewards)
-ts_regret <- cumsum(best_arm_probs - ts_rewards)
-
-# Plot cumulative regret
-regret_df <- tibble(
-  t = 1:n_bandit,
-  UCB = ucb_regret,
-  Thompson = ts_regret
-) %>% pivot_longer(-t)
-
-ggplot(regret_df, aes(x = t, y = value, color = name)) +
-  geom_line() +
-  labs(title = "Cumulative Regret: UCB vs Thompson Sampling",
-       x = "Time Step", y = "Cumulative Regret",
-       color = "Algorithm") +
-  theme_minimal()
-```
-From time step 0 to 300, their cumulative regret curves are nearly identical. This means:
-
--	Both algorithms adapt at roughly the same rate
-
--	The regime switches weren’t too punishing for either approach
-
--	This part of the run is relatively balanced
-
-Between time steps 300–450, Thompson Sampling performs slightly worse
-
--	Thompson’s regret increases sharper than UCB’s during that stretch.
-
--	Suggests that in this segment, UCB may have adapted more quickly to changes in the hidden state.
-
--	This could be due to how UCB handles uncertainty more aggressively (through confidence bounds), while Thompson may remain more exploratory.
-
-In the end (t = 500) both algorithms end up with similar regret, so they learned, and neither dominates.
-
----
-# WITHOUT STAN
----
-
-# 6. Generating Simulated State Transitions
-
-We will start generating state transitions that will guide the probabilities of each arm of the bandit problem. We initiate using a stable setup where the probability of transition is low (10 %) and the transitions between states are not very frequent:
-
-```{r generate-simulated-hmm-data}
-
-# I directly define a transition matrix (we can try to get the values from stan but im not totally sure how to get the model) 
-
-init_prob <- c(0.5,0.5) # I set initial probability of each state as equal
+init_prob <- c(0.5,0.5) # w set initial probability of each state as equal
 
 # On all the code I use trans_mat as transition matrix
 trans_mat <- matrix(c(0.9, 0.1,
@@ -351,27 +52,21 @@ for (t in 2:n_sim) {
 }
 
 # we plot the state transitions
-
 plot(states_sim, type = "s", ylim = c(1, 2), 
      main = "State Transitions", xlab = "Time Step", ylab = "",yaxt = "n",
      col = "blue", lwd = 2)
 axis(2, at = c(1, 2), labels = c("State 1", "State 2"))
-
 ```
 
 
-# 7. Bandit Algorithms (UCB and Thompson Sampling)
+# 2. Bandit Algorithms (UCB and Thompson Sampling)
 
 (Note: We call the tuned UCB version simply "UCB" from now on.)
 
 We will consider now a setting where each arm of the bandit, change its success probability depending on the general state. In this basic setting, we considered symmetric bandits, hence one arm has 80% success probability at State 1 and the other just 20%. When the state transitions to State 2 this probabilities are inverted between arms.
 
 We start running just one simulation of the algorithms:
-
 ```{r bandit-algorithms}
-
-# I directly define a transition matrix ( we can try to get the values from stan) 
-
 init_prob <- c(0.5,0.5) #probability to initiate at each state
 
 trans_mat <- matrix(c(0.9, 0.1,
@@ -459,7 +154,7 @@ ggplot(regret_df, aes(x = t, y = value, color = name)) +
 
 DERIVE CONCLUSIONS 
 
-# 8. Computing Average Performance
+# 3. Computing Average Performance
 
 Now, we repeat the simulation multiple times (200 runs) and plot average regret with confidence intervals.
 
@@ -549,7 +244,7 @@ ggplot(regret_summary_long, aes(x = t, y = mean, color = Algorithm, fill = Algor
 
 DERIVE CONCLUSIONS
 
-# 9. Lower Transition Stickiness
+# 4. Lower Transition Stickiness
 
 In the next steps we will start with more challenging environments. Here we first lower the transition stickiness. The first transition matrix is:
 $$ P = \begin{bmatrix} 0.6 & 0.4 \\ 0.4 & 0.6 \end{bmatrix} $$
@@ -641,7 +336,9 @@ ggplot(regret_summary_long, aes(x = t, y = mean, color = Algorithm, fill = Algor
   theme_minimal()
 ```
 
-# 10. Implementing Sliding Window UCB
+DERIVE CONCLUSIONS
+
+# 5. Implementing Sliding Window UCB
 
 Now, we will make the UCB algorithm focus only on recent observations using a **sliding window**. We begin with window sizes of **10**, **20**, and **100**. This can help UCB adapt more quickly to dynamic environments by ignoring outdated information, which is particularly useful when the reward distribution changes due to hidden state switching.
 
@@ -724,8 +421,9 @@ ggplot(regret_all_sw, aes(x = t, y = regret_mean, color = Window, fill = Window)
   theme_minimal()
 ```
 
+DERIVE CONCLUSIONS
 
-# 11. Adding a Third Arm
+# 6. Adding a Third Arm
 
 Next, we add a third arm to increase the complexity of the bandit environment. This allows us to explore how each algorithm handles more challenging exploration-exploitation trade-offs. We'll simulate a 3-arm setting and compare the performance of **standard UCB**, **Thompson Sampling**, and **Sliding Window UCB (window = 20)**. Also, we increased it to 1000 runs, since for 100 we had not as clear results yet.
 
@@ -839,7 +537,7 @@ ggplot(regret_df_3arm, aes(x = t, y = regret, color = method, fill = method)) +
 ```
 In the 3-arm environment, all algorithms demonstrate effective adaptation, with cumulative regret surprisingly decreasing over time. This may indicate that, on average, the algorithms are outperforming the per-step oracle due to consistent identification of a robustly good arm. Thompson Sampling and Sliding Window UCB (window = 20) exhibit slightly lower regret than standard UCB, though all three perform similarly overall.
 
-# 12. Adding a Fourth Arm
+# 7. Adding a Fourth Arm
 
 To further increase the complexity of the bandit environment, we now add a **fourth arm**. This allows us to evaluate how well each algorithm scales with increased action space.
 
@@ -953,9 +651,9 @@ ggplot(regret_df_4arm, aes(x = t, y = regret, color = method, fill = method)) +
   theme_minimal()
 ```
 
+DERIVE CONCLUSIONS
 
-
-# 13. Simulating Abrupt Switches
+# 8. Simulating Abrupt Switches
 
 To test how well the algorithms adapt to rapidly changing environments, we now simulate **abrupt switching dynamics**. This is done by modifying the transition matrix to increase the switching probability.
 
@@ -1083,7 +781,7 @@ With more frequent switching between reward states, the landscape becomes much m
 In environments with rapid change, Bayesian sampling methods like TS and memory-limited strategies like SW-UCB outperform traditional UCB by staying reactive and localized.
 ---
 
-# 14. Non-Symmetric Transitions
+# 9. Non-Symmetric Transitions
 
 Next, we explore **non-symmetric transition dynamics** where the environment is **biased toward one state**. This tests whether algorithms can adapt when one arm tends to dominate more persistently.
 
@@ -1200,7 +898,7 @@ ggplot(regret_df_4arm, aes(x = t, y = regret, color = method, fill = method)) +
 ```
 
 
-# 15a. Discounted UCB
+# 10a. Discounted UCB
 
 We now test a **Discounted UCB** variant, where older observations are **exponentially down-weighted**. This allows the algorithm to stay responsive in dynamic environments without using a hard cutoff like in Sliding Window UCB.
 
@@ -1289,7 +987,7 @@ ggplot(regret_df_disc, aes(x = t, y = regret, color = method, fill = method)) +
   theme_minimal()
 ```
 
-# 15b. Fixing Discounted UCB
+# 10b. Fixing Discounted UCB
 
 Let's revise our implementation of **Discounted UCB** to ensure that recent information is properly weighted without prematurely discounting new observations.
 
@@ -1367,7 +1065,7 @@ ggplot(regret_df_discfix, aes(x = t, y = regret, color = method, fill = method))
 ```
 
 
-# 15c. Discounted UCB with State-Aligned Optimal Reward
+# 10c. Discounted UCB with State-Aligned Optimal Reward
 
 We now revise the regret calculation to explicitly account for the current **latent state**. This ensures we always compare against the **best arm given the state**, rather than against a global best.
 
@@ -1454,7 +1152,7 @@ Interestingly, both Discounted-UCB versions overtake the oracle on average later
 -	Or, more likely: there’s a mismatch between the simulation’s latent state and what we assume to be the “best” at each time.
 
 
-# 16. Different Reward Factors
+# 11. Different Reward Factors
 
 Now we explore how different reward gaps between arms affect algorithm performance. We simulate a 4-arm environment with more subtle differences:
 
@@ -1566,7 +1264,7 @@ UCB (blue) and Sliding Window UCB (red) show higher regret, especially in early 
 ---
 
 
-# 17. Reward Gap Shrinkage
+# 12. Reward Gap Shrinkage
 
 Now, we try even smaller gaps: `[0.51, 0.5, 0.49, 0.48]` to examine how algorithms perform when the arms are nearly indistinguishable.
 
@@ -1609,7 +1307,7 @@ Sliding Window UCB (window = 20) surprisingly performs best.
 
 
 
-# 18. Time-Varying Within Arm-Rewards
+# 13. Time-Varying Within Arm-Rewards
 
 ```{r}
 # 17 Hamilton Markov‑Switching Autoregressive based on the James Douglas book. Formulations :
@@ -1779,12 +1477,12 @@ ggplot(df_acc_long, aes(t, value, color=variable)) +
 
 
 
-# 19. Adding a Fifth Arm
+# 14. Adding a Fifth Arm
 
 
 
 
-# 20. Non-Stationary Rewards 
+# 15. Non-Stationary Rewards 
 
 Here I'm doing Non‑Stationary Rewards driven by James Hamilton’s Markov‑Switching Autoregressive thingie in the book.
 
