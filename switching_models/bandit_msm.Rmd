@@ -97,8 +97,12 @@ Possible Reasons:
 Saving the model (to avoid recompiling every time):
 ```{r}
 saveRDS(fit, "fit_msm_model.rds")
+```
+
+```{r}
 fit <- readRDS("fit_msm_model.rds")
 ```
+
 
 # 3. Simulate Hidden Markov Model (HMM)
 
@@ -234,7 +238,7 @@ head(simulated_data)
 ```
 
 
-# 6. Bandit Algorithms (UCB and Thompson Sampling)
+# 5. Bandit Algorithms (UCB and Thompson Sampling)
 
 (Note: We call the tuned UCB version simply "UCB" from now on.)
 
@@ -316,7 +320,8 @@ Between time steps 300–450, Thompson Sampling performs slightly worse
 In the end (t = 500) both algorithms end up with similar regret, so they learned, and neither dominates.
 
 ---
-
+# WITHOUT STAN
+---
 
 # 6. Generating Simulated State Transitions
 
@@ -324,7 +329,7 @@ We will start generating state transitions that will guide the probabilities of 
 
 ```{r generate-simulated-hmm-data}
 
-# I directly define a transition matrix ( we can try to get the values from stan but im not totally sure how to get the model) 
+# I directly define a transition matrix (we can try to get the values from stan but im not totally sure how to get the model) 
 
 init_prob <- c(0.5,0.5) # I set initial probability of each state as equal
 
