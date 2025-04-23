@@ -1,0 +1,151 @@
+---
+title: "Dynamic Bernoulli Bandit with walker and walker_glm"
+author: "Marvin Ernst"
+date: "2025-04-22"
+output: html_document
+---
+
+Install the "walker" - this is the correct one (if you just install walker, it will give you an older version which does not work with Bernoulli etc.)
+
+Remove walker in case you already installed that (it will not overwrite if  you keep the old verison):
+```{r}
+#remove.packages("walker")
+```
+
+In case you don't have remote installed yet:
+```{r}
+pkgbuild::check_build_tools(debug = TRUE)
+```
+
+Now Install it via git:
+```{r}
+remotes::install_github("helske/walker", force = TRUE, build_vignettes = TRUE)
+```
+
+After reinstall, check version:
+```{r}
+packageVersion("walker")
+```
+
+
+```{r setup, include=FALSE}
+library(walker)
+library(tidyverse)
+set.seed(2025)
+```
+
+# 1. Simulate Non-Stationary Bernoulli Rewards
+
+We simulate a time-varying reward probability $\pi_t$ using a random walk on the logit scale.
+
+```{r simulate-random-walk}
+n <- 500
+logit_pi <- numeric(n)
+logit_pi[1] <- qlogis(0.5)  # start at 0.5
+
+for (t in 2:n) {
+  logit_pi[t] <- logit_pi[t - 1] + rnorm(1, mean = 0, sd = 0.1)
+}
+
+pi_t <- plogis(logit_pi)
+y <- rbinom(n, size = 1, prob = pi_t)
+plot(pi_t, type = "l", main = "True \u03c0_t (reward probability)", ylab = "\u03c0_t", xlab = "Time")
+```
+
+# 2. Fit the walker() Model
+
+We use `walker()` to estimate $\pi_t$ and its uncertainty. (`walker_glm()` is inconsitent with the binimila setup!)
+
+We fit walker with time-varying intercept using rw1:
+```{r fit-walker, warning=FALSE, message=FALSE}
+fit <- walker(
+  formula = y ~ -1 + rw1(~ 1, beta = c(0, 1), sigma = c(2, 0.01)),
+  distribution = "binomial",
+  iter = 2000,
+  chains = 4
+)
+summary(fit)
+```
+
+```{r fit-walker-glm, warning=FALSE, message=FALSE}
+fit <- walker_glm(
+  y ~ 1,
+  distribution = "binomial",
+  beta = TRUE,
+  sigma = c(2, 0.1),
+  iter = 2000,
+  chains = 4
+)
+summary(fit)
+```
+
+# 3. Extract Posterior Estimates
+
+We extract the posterior means and credible intervals for $\pi_t$.
+
+```{r extract-estimates}
+fitted_vals <- fitted(fit, interval = TRUE)
+walker_df <- tibble(
+  t = 1:n,
+  pi_est = fitted_vals[, "fit"],
+  pi_lwr = fitted_vals[, "lwr"],
+  pi_upr = fitted_vals[, "upr"],
+  pi_true = pi_t
+)
+
+walker_df %>%
+  ggplot(aes(x = t)) +
+  geom_line(aes(y = pi_true), color = "black", size = 1, linetype = "dashed") +
+  geom_line(aes(y = pi_est), color = "blue") +
+  geom_ribbon(aes(ymin = pi_lwr, ymax = pi_upr), fill = "blue", alpha = 0.2) +
+  labs(title = "Estimated vs True \u03c0_t", y = "\u03c0_t", x = "Time") +
+  theme_minimal()
+```
+
+# 4. Apply UCB and Thompson Sampling
+
+We now apply UCB and Thompson Sampling using the estimated means and intervals.
+
+```{r bandit-comparison}
+# Initialize
+ucb_rewards <- ts_rewards <- numeric(n)
+ucb_counts <- ts_alpha <- ts_beta <- rep(1, n)  # Uniform prior
+
+for (t in 1:n) {
+  # UCB: use upper bound as bonus
+  bonus <- walker_df$pi_upr[t] - walker_df$pi_est[t]
+  ucb_val <- walker_df$pi_est[t] + bonus
+  ucb_reward <- rbinom(1, 1, walker_df$pi_true[t])
+  ucb_rewards[t] <- ucb_reward
+
+  # Thompson Sampling: sample from Beta(α, β)
+  sampled_pi <- rbeta(1, ts_alpha[t], ts_beta[t])
+  ts_reward <- rbinom(1, 1, walker_df$pi_true[t])
+  ts_rewards[t] <- ts_reward
+
+  # Update priors
+  if (t < n) {
+    ts_alpha[t + 1] <- ts_alpha[t] + ts_reward
+    ts_beta[t + 1] <- ts_beta[t] + (1 - ts_reward)
+  }
+}
+
+# Regret (vs oracle that always knows true \u03c0_t)
+oracle_reward <- walker_df$pi_true
+ucb_regret <- cumsum(oracle_reward - ucb_rewards)
+ts_regret <- cumsum(oracle_reward - ts_rewards)
+
+regret_df <- tibble(
+  t = 1:n,
+  UCB = ucb_regret,
+  Thompson = ts_regret
+) %>% pivot_longer(-t)
+
+regret_df %>%
+  ggplot(aes(x = t, y = value, color = name)) +
+  geom_line() +
+  labs(title = "Cumulative Regret: UCB vs Thompson (walker_glm)",
+       x = "Time", y = "Cumulative Regret", color = "Method") +
+  theme_minimal()
+```
+
