@@ -1,0 +1,155 @@
+---
+title: "Bandit Algorithms in a Markov Switching Environment usinf STAN"
+author: "Marvin Ernst & Oriol Gelabert & Melisa Vadenja"
+date: "2025-04-13"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+Clear environment:
+```{r}
+rm(list = ls())
+```
+
+Install from GitHub - devtools:
+```{r}
+#install.packages("devtools")
+#devtools::install_github("stan-dev/cmdstanr", dependencies = TRUE)
+```
+
+Load necessary libraries:
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores()) # use all cores
+```
+
+
+# 1. Simulate Hidden Markov Model (HMM)
+
+Here we just simulate with two arms and two states. Arms are chosen by random. The collected reward is 1 or 0, which is saved in the variable y at each time t. 
+
+```{r simulate-hmm}
+# Transition matrix and initial probabilities
+trans_mat <- matrix(c(0.9, 0.1,
+                      0.1, 0.9), nrow = 2, byrow = TRUE)
+init_prob <- c(0.5, 0.5)
+
+# State-arm reward matrix (theta[state, arm])
+theta_true <- matrix(c(0.8, 0.2,
+                       0.2, 0.8), nrow = 2, byrow = TRUE)
+
+# Simulate sequence
+n <- 500
+states <- numeric(n)
+arms <- numeric(n)
+y <- numeric(n)
+
+states[1] <- sample(1:2, 1, prob = init_prob)
+arms[1] <- sample(1:2, 1)
+y[1] <- rbinom(1, 1, theta_true[states[1], arms[1]])
+
+for (t in 2:n) {
+  states[t] <- sample(1:2, 1, prob = trans_mat[states[t-1], ])
+  arms[t] <- sample(1:2, 1)  # Random arm choice for simulation
+  y[t] <- rbinom(1, 1, theta_true[states[t], arms[t]])
+}
+
+data_hmm <- tibble(t = 1:n, state = states, arm = arms, y = y)
+head(data_hmm)
+```
+
+# 2. Generating Simulated Data using the Stan Model
+
+We are now doing Bayesian inference on a multi-armed bandit with hidden states, not just simulating, but actually learning the latent structure (how often state switches happen, and how good each arm is in each state).
+
+```{r fit-stan-model, message=FALSE, warning=FALSE}
+stan_data <- list(N = n, y = y, arm = arms)
+
+fit <- stan(
+  file = "hmm_2arm_2states.stan",
+  data = stan_data,
+  iter = 2000,
+  warmup = 1000,
+  chains = 4,
+  seed = 123
+)
+
+print(fit, pars = c("init", "trans", "theta"))
+```
+
+# 3. Bandit Algorithms (UCB and Thompson Sampling)
+
+```{r bandit-simulation}
+# Extract MAP/mean estimates
+posterior <- extract(fit)
+init_est <- colMeans(posterior$init)
+trans_est <- apply(posterior$trans, c(2,3), mean)
+theta_est <- apply(posterior$theta, c(2,3), mean)
+
+# Simulate new state sequence
+n_bandit <- 500
+states_sim <- numeric(n_bandit)
+states_sim[1] <- sample(1:2, 1, prob = init_est)
+for (t in 2:n_bandit) {
+  states_sim[t] <- sample(1:2, 1, prob = trans_est[states_sim[t - 1], ])
+}
+
+# Bandit setup
+y_ucb <- numeric(n_bandit)
+y_ts <- numeric(n_bandit)
+
+ucb_success <- rep(0, 2)
+ucb_trials <- rep(0, 2)
+ts_alpha <- rep(1, 2)
+ts_beta <- rep(1, 2)
+
+for (t in 1:n_bandit) {
+  # UCB selection
+  ucb_values <- ifelse(
+    ucb_trials == 0,
+    1,
+    ucb_success / ucb_trials + sqrt(2 * log(t) / ucb_trials)
+  )
+  a_ucb <- which.max(ucb_values)
+  r_ucb <- rbinom(1, 1, prob = theta_est[states_sim[t], a_ucb])
+  y_ucb[t] <- r_ucb
+  ucb_success[a_ucb] <- ucb_success[a_ucb] + r_ucb
+  ucb_trials[a_ucb] <- ucb_trials[a_ucb] + 1
+
+  # Thompson Sampling
+  ts_draws <- rbeta(2, ts_alpha, ts_beta)
+  a_ts <- which.max(ts_draws)
+  r_ts <- rbinom(1, 1, prob = theta_est[states_sim[t], a_ts])
+  y_ts[t] <- r_ts
+  ts_alpha[a_ts] <- ts_alpha[a_ts] + r_ts
+  ts_beta[a_ts] <- ts_beta[a_ts] + (1 - r_ts)
+}
+
+# Regret computation
+best_probs <- apply(theta_est[states_sim, ], 1, max)
+ucb_regret <- cumsum(best_probs - y_ucb)
+ts_regret <- cumsum(best_probs - y_ts)
+
+regret_df <- tibble(
+  t = 1:n_bandit,
+  UCB = ucb_regret,
+  Thompson = ts_regret
+) %>% pivot_longer(-t)
+
+# Plot
+
+ggplot(regret_df, aes(x = t, y = value, color = name)) +
+  geom_line() +
+  labs(title = "Cumulative Regret: UCB vs Thompson (Arm-Specific HMM)",
+       x = "Time Step", y = "Cumulative Regret",
+       color = "Algorithm") +
+  theme_minimal()
+```
+
+
+
+
