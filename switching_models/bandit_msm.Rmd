@@ -1313,65 +1313,83 @@ Sliding Window UCB (window = 20) surprisingly performs best.
 
 # 17. Time-Varying Within Arm-Rewards
 
+In the section 17 and 19 we will be experimenting with Time-Varying Arm Rewards. This section deals with the case of Discrete Switching while section 19 deals with a Smoother Variation of Switching via Autoregressive processes (also mentioned in James Doulgas' book as Hamilton Markov‑Switching Autoregressive, MS-AR). While a Discrete Switching method is much simpler than Hamilton's MS-AR, it is still time varying.
+
+The purpose of the code in this section is to	simulate a 2-state Markov chain and use the hidden state to determine arm reward probabilities. Each arm has different values for each state. 
+
+
 ```{r}
-# 17 Hamilton Markov‑Switching Autoregressive based on the James Douglas book. Formulations :
-# — Stationary case: fixed p1,p2
-set.seed(42)
+# 17. Time-Varying Within Arm-Rewards (Discrete Markov Switching) 
+
+set.seed(2050)
 n_bandit <- 500
 n_runs   <- 200
-p1 <- 0.7
-p2 <- 0.3
-best_prob <- pmax(p1,p2)
 
-# storage
-reg_ucb_stat <- reg_ts_stat <- reg_sw_stat <- 
-  array(0, c(n_bandit, n_runs))
-```
+trans_mat <- matrix(c(0.9, 0.1, 0.1, 0.9), 2, 2)
 
-```{r}
+# state-dependent probabilities for each arm
+arm1_probs <- c(0.8, 0.3)
+arm2_probs <- c(0.4, 0.7)
+
+
+reg_ucb_stat <- reg_ts_stat <- reg_sw_stat <- array(0, c(n_bandit, n_runs))
+
 for(r in 1:n_runs){
-  # initialize stats
-  succ_ucb <- tr_ucb <- c(0,0)
-  alpha_ts <- beta_ts <- c(1,1)
-  history  <- list(arm=integer(), reward=numeric())
+  # latent states
+  states <- numeric(n_bandit)
+  states[1] <- sample(1:2, 1)
+  for(t in 2:n_bandit) {
+    states[t] <- sample(1:2, 1, prob = trans_mat[states[t - 1], ])
+  }
+  
+  # probs based on state
+  arm1 <- arm1_probs[states]
+  arm2 <- arm2_probs[states]
+  best <- ifelse(arm1 > arm2, 1, 2)
+  best_prob <- pmax(arm1, arm2)
+  
+  #init
+  succ_ucb <- tr_ucb <- c(0, 0)
+  alpha_ts <- beta_ts <- c(1, 1)
+  history <- list(arm = integer(), reward = numeric())
+  
   cum_ucb <- cum_ts <- cum_sw <- 0
   regs_ucb <- regs_ts <- regs_sw <- numeric(n_bandit)
   
   for(t in 1:n_bandit){
-    probs <- c(p1, p2)
+    probs <- c(arm1[t], arm2[t])
     
-    # UCB
-    ucbv <- ifelse(tr_ucb==0, 1,
-                   succ_ucb/tr_ucb + sqrt(2*log(t)/tr_ucb))
+    # UCB 
+    ucbv <- ifelse(tr_ucb == 0, 1, succ_ucb / tr_ucb + sqrt(2 * log(t) / tr_ucb))
     a_ucb <- which.max(ucbv)
-    r_ucb <- rbinom(1,1,probs[a_ucb])
-    tr_ucb[a_ucb]   <- tr_ucb[a_ucb]   + 1
+    r_ucb <- rbinom(1, 1, probs[a_ucb])
     succ_ucb[a_ucb] <- succ_ucb[a_ucb] + r_ucb
-    cum_ucb <- cum_ucb + (best_prob - probs[a_ucb])
+    tr_ucb[a_ucb] <- tr_ucb[a_ucb] + 1
+    cum_ucb <- cum_ucb + (best_prob[t] - probs[a_ucb])
     regs_ucb[t] <- cum_ucb
     
-    # Thompson
+    # Thompson Sampling 
     draw_ts <- rbeta(2, alpha_ts, beta_ts)
-    a_ts    <- which.max(draw_ts)
-    r_ts    <- rbinom(1,1,probs[a_ts])
+    a_ts <- which.max(draw_ts)
+    r_ts <- rbinom(1, 1, probs[a_ts])
     alpha_ts[a_ts] <- alpha_ts[a_ts] + r_ts
-    beta_ts[a_ts]  <- beta_ts[a_ts]  + (1 - r_ts)
-    cum_ts <- cum_ts + (best_prob - probs[a_ts])
+    beta_ts[a_ts] <- beta_ts[a_ts] + (1 - r_ts)
+    cum_ts <- cum_ts + (best_prob[t] - probs[a_ts])
     regs_ts[t] <- cum_ts
     
-    # Sliding‑Window UCB (W=50)
+    #Sliding Window UCB (W = 50)
     W <- 50
     swv <- numeric(2)
     for(a in 1:2){
-      idx <- tail(which(history$arm==a), W)
+      idx <- tail(which(history$arm == a), W)
       ntr <- length(idx); nsu <- sum(history$reward[idx])
-      swv[a] <- if(ntr==0) 1 else nsu/ntr + sqrt(2*log(t)/ntr)
+      swv[a] <- if(ntr == 0) 1 else nsu / ntr + sqrt(2 * log(t) / ntr)
     }
-    a_sw   <- which.max(swv)
-    r_sw   <- rbinom(1,1,probs[a_sw])
-    history$arm    <- c(history$arm, a_sw)
+    a_sw <- which.max(swv)
+    r_sw <- rbinom(1, 1, probs[a_sw])
+    history$arm <- c(history$arm, a_sw)
     history$reward <- c(history$reward, r_sw)
-    cum_sw <- cum_sw + (best_prob - probs[a_sw])
+    cum_sw <- cum_sw + (best_prob[t] - probs[a_sw])
     regs_sw[t] <- cum_sw
   }
   
@@ -1380,75 +1398,111 @@ for(r in 1:n_runs){
   reg_sw_stat[,r]  <- regs_sw
 }
 
-# summarize & plot
 df_stat <- tibble(
-  t       = 1:n_bandit,
-  UCB     = rowMeans(reg_ucb_stat),
-  Thompson= rowMeans(reg_ts_stat),
-  SW_UCB  = rowMeans(reg_sw_stat)
-) %>% pivot_longer(-t, names_to="Method", values_to="CumulativeRegret")
+  t = 1:n_bandit,
+  UCB = rowMeans(reg_ucb_stat),
+  Thompson = rowMeans(reg_ts_stat),
+  SW_UCB = rowMeans(reg_sw_stat)
+) %>% pivot_longer(-t, names_to = "Method", values_to = "CumulativeRegret")
 
-ggplot(df_stat, aes(t, CumulativeRegret, color=Method)) +
-  geom_line() +
+ggplot(df_stat, aes(t, CumulativeRegret, color = Method)) +
+  geom_line(size = 1) +
   labs(
-    title="Stationary Case: Avg. Cumulative Regret",
-    x="Time", y="Cumulative Regret"
+    title = "Cumulative Regret: Discrete Time-Varying Arm Rewards (Markov Switching)",
+    x = "Time Step", y = "Cumulative Regret"
   ) +
   theme_minimal()
 ```
 
 ```{r}
-# Here im only doing for 2 arms, maybe i should be running this for more arms like 4. We can always change easily
-sim <- simulate_p()      
-arm1 <- sim$p 
-arm2 <- simulate_p()$p
-best <- ifelse(arm1>arm2,1,2)
 
-# run one bandit experiment, storing decisions
+simulate_state_dependent_arms <- function(n = 500, 
+                                          trans_mat = matrix(c(0.9, 0.1, 0.1, 0.9), 2, 2),
+                                          arm1_probs = c(0.8, 0.3),
+                                          arm2_probs = c(0.4, 0.7)) {
+  states <- numeric(n)
+  arm1 <- numeric(n)
+  arm2 <- numeric(n)
+  
+  # init state
+  states[1] <- sample(1:2, 1)
+  
+  for (t in 2:n) {
+    states[t] <- sample(1:2, 1, prob = trans_mat[states[t - 1], ])
+  }
+  
+  # arm reward probabilities based on state
+  for (t in 1:n) {
+    arm1[t] <- arm1_probs[states[t]]
+    arm2[t] <- arm2_probs[states[t]]
+  }
+  
+  list(p1 = arm1, p2 = arm2, state = states)
+}
+
+sim <- simulate_state_dependent_arms()
+arm1 <- sim$p1
+arm2 <- sim$p2
+state <- sim$state
+best <- ifelse(arm1 > arm2, 1, 2)
+
 n <- length(arm1)
 ucb_choice <- ts_choice <- sw_choice <- integer(n)
 ucb_reward <- ts_reward <- sw_reward <- integer(n)
 
-# initialize...
-succ_ucb <- tr_ucb <- c(0,0)
-alpha_ts <- beta_ts <- c(1,1)
-history <- list(arm=integer(), reward=numeric())
+succ_ucb <- tr_ucb <- c(0, 0)
+alpha_ts <- beta_ts <- c(1, 1)
+history <- list(arm = integer(), reward = numeric())
 
 for(t in 1:n){
-  probs <- c(arm1[t],arm2[t])
-  best[t] <- which.max(probs)
+  probs <- c(arm1[t], arm2[t])
+  
   # UCB
-  vals <- ifelse(tr_ucb==0,1,succ_ucb/tr_ucb+sqrt(2*log(t)/tr_ucb))
-  a <- which.max(vals); ucb_choice[t]<-a
-  r <- rbinom(1,1,probs[a]); ucb_reward[t]<-r
-  succ_ucb[a]<-succ_ucb[a]+r; tr_ucb[a]<-tr_ucb[a]+1
+  vals <- ifelse(tr_ucb == 0, 1, succ_ucb / tr_ucb + sqrt(2 * log(t) / tr_ucb))
+  a <- which.max(vals); ucb_choice[t] <- a
+  r <- rbinom(1, 1, probs[a]); ucb_reward[t] <- r
+  succ_ucb[a] <- succ_ucb[a] + r; tr_ucb[a] <- tr_ucb[a] + 1
+  
   # TS
-  d <- rbeta(2,alpha_ts,beta_ts); a<-which.max(d); ts_choice[t]<-a
-  r <- rbinom(1,1,probs[a]); ts_reward[t]<-r
-  alpha_ts[a]<-alpha_ts[a]+r; beta_ts[a]<-beta_ts[a]+(1-r)
-  # SW‑UCB(50)
-  W<-50; swv<-numeric(2)
+  d <- rbeta(2, alpha_ts, beta_ts); a <- which.max(d); ts_choice[t] <- a
+  r <- rbinom(1, 1, probs[a]); ts_reward[t] <- r
+  alpha_ts[a] <- alpha_ts[a] + r; beta_ts[a] <- beta_ts[a] + (1 - r)
+  
+  # SW-UCB(50)
+  W <- 50; swv <- numeric(2)
   for(a in 1:2){
-    idx <- tail(which(history$arm==a),W); ntr<-length(idx)
-    swv[a]<- if(ntr==0) 1 else sum(history$reward[idx])/ntr+sqrt(2*log(t)/ntr)
+    idx <- tail(which(history$arm == a), W)
+    ntr <- length(idx)
+    swv[a] <- if(ntr == 0) 1 else sum(history$reward[idx]) / ntr + sqrt(2 * log(t) / ntr)
   }
-  a<-which.max(swv); sw_choice[t]<-a
-  r<-rbinom(1,1,probs[a]); sw_reward[t]<-r
-  history$arm    <- c(history$arm,a)
-  history$reward <- c(history$reward,r)
+  a <- which.max(swv); sw_choice[t] <- a
+  r <- rbinom(1, 1, probs[a]); sw_reward[t] <- r
+  history$arm <- c(history$arm, a)
+  history$reward <- c(history$reward, r)
 }
 
 df_steps <- data.frame(
-  t       = 1:n,
-  p1      = round(arm1,3),
-  p2      = round(arm2,3),
-  best    = best,
+  t = 1:n,
+  state = state,
+  p1 = round(arm1, 3),
+  p2 = round(arm2, 3),
+  best = best,
   UCB_arm = ucb_choice, UCB_r = ucb_reward,
-  TS_arm  = ts_choice,  TS_r = ts_reward,
-  SW_arm  = sw_choice,  SW_r = sw_reward
+  TS_arm = ts_choice, TS_r = ts_reward,
+  SW_arm = sw_choice, SW_r = sw_reward
 )
-kable(head(df_steps,10), caption="First 10 Decisions of Each Algorithm")
+
+kable(head(df_steps, 10), caption = "First 10 Decisions of Each Algorithm")
 ```
+
+Explaining Behavior: The true best arm depends on the latent state — but our algorithms can't observe the state.
+
+- UCB is over committing to arm 1 because in state 1, arm 1 has 0.8 (much better than 0.4).
+- Because the environment starts in state 1 and is very sticky (0.9), the early bias toward arm 1 doesn’t get corrected quickly.
+- In many runs, the state never even switches long enough for TS or SW to confidently see that arm 2 is better in state 2.
+
+So we see that UCB’s rigidity accidentally is working in its favor. TS and SW are reacting to switching and noise, but looking worse on average because their adaptability doesn’t help enough due to the stickiness.
+
 
 ```{r}
 df_plot <- data.frame(
@@ -1479,6 +1533,114 @@ ggplot(df_acc_long, aes(t, value, color=variable)) +
   theme_minimal()
 ```
 
+The results that we obtained in this simulation are highly susceptible to changes in switching probabilities. If we were to make switching more frequent by creating more back and forth switching we expect TS and SW to outperform UBC as we expect UBC to not perform well with more frequent switching.
+
+
+```{r}
+trans_mat <- matrix(c(0.6, 0.4, 0.4, 0.6), 2, 2)
+# state-dependent probabilities for each arm
+arm1_probs <- c(0.8, 0.3)  
+arm2_probs <- c(0.4, 0.7)
+
+reg_ucb_stat <- reg_ts_stat <- reg_sw_stat <- array(0, c(n_bandit, n_runs))
+
+for(r in 1:n_runs){
+  # atent states
+  states <- numeric(n_bandit)
+  states[1] <- sample(1:2, 1)
+  for(t in 2:n_bandit) {
+    states[t] <- sample(1:2, 1, prob = trans_mat[states[t - 1], ])
+  }
+  
+  # probs based on state
+  arm1 <- arm1_probs[states]
+  arm2 <- arm2_probs[states]
+  best <- ifelse(arm1 > arm2, 1, 2)
+  best_prob <- pmax(arm1, arm2)
+  
+  #initialization
+  succ_ucb <- tr_ucb <- c(0, 0)
+  alpha_ts <- beta_ts <- c(1, 1)
+  history <- list(arm = integer(), reward = numeric())
+  
+  cum_ucb <- cum_ts <- cum_sw <- 0
+  regs_ucb <- regs_ts <- regs_sw <- numeric(n_bandit)
+  
+  for(t in 1:n_bandit){
+    probs <- c(arm1[t], arm2[t])
+    
+    # UCB 
+    ucbv <- ifelse(tr_ucb == 0, 1, succ_ucb / tr_ucb + sqrt(2 * log(t) / tr_ucb))
+    a_ucb <- which.max(ucbv)
+    r_ucb <- rbinom(1, 1, probs[a_ucb])
+    succ_ucb[a_ucb] <- succ_ucb[a_ucb] + r_ucb
+    tr_ucb[a_ucb] <- tr_ucb[a_ucb] + 1
+    cum_ucb <- cum_ucb + (best_prob[t] - probs[a_ucb])
+    regs_ucb[t] <- cum_ucb
+    
+    # Thompson Sampling
+    draw_ts <- rbeta(2, alpha_ts, beta_ts)
+    a_ts <- which.max(draw_ts)
+    r_ts <- rbinom(1, 1, probs[a_ts])
+    alpha_ts[a_ts] <- alpha_ts[a_ts] + r_ts
+    beta_ts[a_ts] <- beta_ts[a_ts] + (1 - r_ts)
+    cum_ts <- cum_ts + (best_prob[t] - probs[a_ts])
+    regs_ts[t] <- cum_ts
+    
+    # Sliding Window UCB (W = 50)
+    W <- 50
+    swv <- numeric(2)
+    for(a in 1:2){
+      idx <- tail(which(history$arm == a), W)
+      ntr <- length(idx); nsu <- sum(history$reward[idx])
+      swv[a] <- if(ntr == 0) 1 else nsu / ntr + sqrt(2 * log(t) / ntr)
+    }
+    a_sw <- which.max(swv)
+    r_sw <- rbinom(1, 1, probs[a_sw])
+    history$arm <- c(history$arm, a_sw)
+    history$reward <- c(history$reward, r_sw)
+    cum_sw <- cum_sw + (best_prob[t] - probs[a_sw])
+    regs_sw[t] <- cum_sw
+  }
+  
+  reg_ucb_stat[,r] <- regs_ucb
+  reg_ts_stat[,r]  <- regs_ts
+  reg_sw_stat[,r]  <- regs_sw
+}
+
+
+df_stat <- tibble(
+  t = 1:n_bandit,
+  UCB = rowMeans(reg_ucb_stat),
+  Thompson = rowMeans(reg_ts_stat),
+  SW_UCB = rowMeans(reg_sw_stat)
+) %>% pivot_longer(-t, names_to = "Method", values_to = "CumulativeRegret")
+
+ggplot(df_stat, aes(t, CumulativeRegret, color = Method)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Cumulative Regret: Discrete Time-Varying Arm Rewards (Markov Switching)",
+    x = "Time Step", y = "Cumulative Regret"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+acc_ucb <- cumsum(ucb_choice==best)/(1:n)
+acc_ts  <- cumsum(ts_choice==best)/(1:n)
+acc_sw  <- cumsum(sw_choice==best)/(1:n)
+df_acc  <- data.frame(t=1:n, UCB=acc_ucb, TS=acc_ts, SW=acc_sw)
+df_acc_long <- reshape2::melt(df_acc, "t")
+
+ggplot(df_acc_long, aes(t, value, color=variable)) +
+  geom_line() +
+  labs(y="Cumulative Accuracy", title="How Often Each Algorithm Picks the Best Arm") +
+  theme_minimal()
+```
+We can see that this graph confirms our expectation of UBC performing worse than the other methods.
+
+(we could do cross validation here to test with which params the methods perform best to further discover relationships)
+
 
 
 # 18. Adding a Fifth Arm
@@ -1488,7 +1650,9 @@ ggplot(df_acc_long, aes(t, value, color=variable)) +
 
 # 19. Non-Stationary Rewards 
 
-Here I'm doing Non‑Stationary Rewards driven by James Hamilton’s Markov‑Switching Autoregressive thingie in the book.
+Here I'm doing Non‑Stationary Rewards driven by James Hamilton’s Markov‑Switching Autoregressive thingie in the book. Now we are  simulating a true non-stationary reward environment using Markov-Switching Autoregressive (MS-AR) processes — this is much more realistic and dynamic than standard discrete switching.
+The mean reward evolves over time using autoregressive dynamics:
+z_t = \mu_{s_t} + \phi(z_{t-1} - \mu_{s_t}) + \sigma \cdot \epsilon_t
 
 Initializing these params do we can use the Markov‑Switching Autoregressive model.
 ```{r}
@@ -1620,7 +1784,7 @@ print(p1)
 print(p2)
 ```
 
-The algorithm whose accuracy dips the least (and recovers fastest) is the most responsive to change. this being ubc makes a lot of sense.
+We can clearly observe that UCB performs the worst as it is vulnerable to new changes and tends to stick with long-term averages weigh old data heavily. UCB Might keep favoring an arm that was best early on but no longer is. This it why UCB can be performing quite well in the begging periods but starts to perform in a worse manner in later stages.
 ###these need further commenting.
 
 
