@@ -1309,13 +1309,13 @@ Sliding Window UCB (window = 20) surprisingly performs best.
 
 # 13. Time-Varying Within Arm-Rewards
 
-In the section 17 and 19 we will be experimenting with Time-Varying Arm Rewards. This section deals with the case of Discrete Switching while section 19 deals with a Smoother Variation of Switching via Autoregressive processes (also mentioned in James Doulgas' book as Hamilton Markov‑Switching Autoregressive, MS-AR). While a Discrete Switching method is much simpler than Hamilton's MS-AR, it is still time varying.
+In the section 13 and 15 we will be experimenting with Time-Varying Arm Rewards. This section deals with the case of Discrete Switching while section 15 deals with a Smoother Variation of Switching via Autoregressive processes (also mentioned in James Doulgas' book as Hamilton Markov‑Switching Autoregressive, MS-AR). While a Discrete Switching method is much simpler than Hamilton's MS-AR, it is still time varying.
 
 The purpose of the code in this section is to	simulate a 2-state Markov chain and use the hidden state to determine arm reward probabilities. Each arm has different values for each state. 
 
 
 ```{r}
-# 17. Time-Varying Within Arm-Rewards (Discrete Markov Switching) 
+# 13. Time-Varying Within Arm-Rewards (Discrete Markov Switching) 
 
 set.seed(2050)
 n_bandit <- 500
@@ -1533,6 +1533,7 @@ The results that we obtained in this simulation are highly susceptible to change
 
 
 ```{r}
+set.seed(224)
 trans_mat <- matrix(c(0.6, 0.4, 0.4, 0.6), 2, 2)
 # state-dependent probabilities for each arm
 arm1_probs <- c(0.8, 0.3)  
@@ -1640,9 +1641,184 @@ We can see that this graph confirms our expectation of UBC performing worse than
 
 
 # 14. Adding a Fifth Arm
+```{r}
+# discrete markov-switching (2 states) – 5-arm bandit
+
+set.seed(2050)
+n_runs   <- 1000   # repetitions for MC
+n_bandit <- 500 
+
+# hidden-state transition matrix
+P_mat <- matrix(c(0.6, 0.4,
+                  0.4, 0.6), nrow = 2, byrow = TRUE)
+
+bandit_probs <- matrix(
+  c(0.80, 0.55, 0.35, 0.25, 0.60,   
+    0.30, 0.45, 0.75, 0.65, 0.40),  
+  nrow = 2, byrow = TRUE)
+
+run_sim <- function(method = c("ucb", "ts", "sw"), window = 20) {
+  method <- match.arg(method)
+  
+  cum_reg <- matrix(0, nrow = n_bandit, ncol = n_runs)
+  
+  for (r in seq_len(n_runs)) {
+    #hidden states
+    state <- numeric(n_bandit)
+    state[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit)
+      state[t] <- sample(1:2, 1, prob = P_mat[state[t-1], ])
+    
+    best_prob <- sapply(state, function(s) max(bandit_probs[s, ]))
+    
+    if (method == "ucb") {
+      succ <- trial <- numeric(5)
+    } else if (method == "ts") {
+      alpha <- beta <- rep(1, 5)
+    } else {                       # sliding window
+      hist <- list(arm = integer(), rwd = numeric())
+    }
+  
+    for (t in seq_len(n_bandit)) {
+      # choose arm 
+      if (method == "ucb") {
+        vals <- ifelse(trial == 0, 1,
+                       succ / trial + sqrt(2 * log(t) / trial))
+        a <- which.max(vals)
+        
+      } else if (method == "ts") {
+        a <- which.max(rbeta(5, alpha, beta))
+        
+      } else {  # SW-UCB
+        vals <- numeric(5)
+        for (arm in 1:5) {
+          idx <- tail(which(hist$arm == arm), window)
+          ntr <- length(idx); nsu <- sum(hist$rwd[idx])
+          vals[arm] <- if (ntr == 0) 1 else nsu / ntr + sqrt(2 * log(t) / ntr)
+        }
+        a <- which.max(vals)
+      }
+      
+      # pull arm 
+      rwd <- rbinom(1, 1, bandit_probs[state[t], a])
+      
+      # update stats
+      if (method == "ucb") {
+        succ[a]  <- succ[a]  + rwd
+        trial[a] <- trial[a] + 1
+      } else if (method == "ts") {
+        alpha[a] <- alpha[a] + rwd
+        beta[a]  <- beta[a]  + (1 - rwd)
+      } else {
+        hist$arm <- c(hist$arm, a)
+        hist$rwd <- c(hist$rwd, rwd)
+      }
+      
+      cum_reg[t, r] <- (if (t == 1) 0 else cum_reg[t-1, r]) +
+                       (best_prob[t] - rwd)
+    }
+  }
+  cum_reg
+}
+
+## Run the three algs
+reg_ucb <- run_sim("ucb")
+reg_ts  <- run_sim("ts")
+reg_sw  <- run_sim("sw", window = 20)
+
+```
+```{r}
+t <- 1:n_bandit
+df5 <- tibble(
+  t      = rep(t, 3),
+  regret = c(rowMeans(reg_ucb),
+             rowMeans(reg_ts),
+             rowMeans(reg_sw)),
+  sd     = c(apply(reg_ucb, 1, sd),
+             apply(reg_ts, 1, sd),
+             apply(reg_sw, 1, sd)),
+  Method = rep(c("UCB", "Thompson", "SW-UCB (20)"), each = n_bandit)
+) %>% 
+  mutate(lower = regret - 1.96*sd/sqrt(n_runs),
+         upper = regret + 1.96*sd/sqrt(n_runs))
+
+ggplot(df5, aes(t, regret, colour = Method, fill = Method)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.20, colour = NA) +
+  labs(title = "Cumulative Regret: Discrete Markov Switching with 5 Arms",
+       x = "Time Step", y = "Average Cumulative Regret") +
+  theme_minimal()
+```
 
 
+```{r}
+acc_ucb <- acc_ts <- acc_sw <- matrix(0, nrow = n_bandit, ncol = n_runs)
 
+for (r in seq_len(n_runs)) {
+  ## latent states
+  s <- numeric(n_bandit)
+  s[1] <- sample(1:2, 1)
+  for (t in 2:n_bandit)
+    s[t] <- sample(1:2, 1, prob = P_mat[s[t-1], ])
+
+  best_arm <- apply(bandit_probs[s, ], 1, which.max)
+
+  succ  <- trial <- numeric(5)
+  alpha <- beta  <- rep(1, 5)
+  hist  <- list(arm = integer(), rwd = numeric())
+
+  for (t in seq_len(n_bandit)) {
+    ## UCB
+    vals <- ifelse(trial == 0, 1,
+                   succ / trial + sqrt(2 * log(t) / trial))
+    a_ucb <- which.max(vals)
+    acc_ucb[t, r] <- (a_ucb == best_arm[t])
+
+    rwd <- rbinom(1, 1, bandit_probs[s[t], a_ucb])
+    succ[a_ucb]  <- succ[a_ucb]  + rwd
+    trial[a_ucb] <- trial[a_ucb] + 1
+
+    ##  Thompson
+    a_ts <- which.max(rbeta(5, alpha, beta))
+    acc_ts[t, r] <- (a_ts == best_arm[t])
+
+    rwd <- rbinom(1, 1, bandit_probs[s[t], a_ts])
+    alpha[a_ts] <- alpha[a_ts] + rwd
+    beta[a_ts]  <- beta[a_ts]  + (1 - rwd)
+
+    ## Sliding-Window UCB (W = 20)
+    W <- 20
+    vals <- numeric(5)
+    for (arm in 1:5) {
+      idx <- tail(which(hist$arm == arm), W)
+      ntr <- length(idx); nsu <- sum(hist$rwd[idx])
+      vals[arm] <- if (ntr == 0) 1 else nsu / ntr + sqrt(2 * log(t) / ntr)
+    }
+    a_sw <- which.max(vals)
+    acc_sw[t, r] <- (a_sw == best_arm[t])
+
+    rwd <- rbinom(1, 1, bandit_probs[s[t], a_sw])
+    hist$arm <- c(hist$arm, a_sw)
+    hist$rwd <- c(hist$rwd, rwd)
+  }
+}
+
+# average over runs
+acc_df <- tibble(
+  t        = rep(1:n_bandit, 3),
+  accuracy = c(rowMeans(acc_ucb),
+               rowMeans(acc_ts),
+               rowMeans(acc_sw)),
+  Method   = rep(c("UCB", "Thompson", "SW-UCB (20)"), each = n_bandit)
+)
+
+ggplot(acc_df, aes(t, accuracy, colour = Method)) +
+  geom_line(size = 1) +
+  labs(title = "Per-Step Optimal-Arm Accuracy (5 Arms, Discrete Switching)",
+       x = "Time Step", y = "Accuracy") +
+  theme_minimal()
+```
+All three lines spike early because every algorithm initially treats all five arms equally, so lucky guesses momentarily lift accuracy. UCB then dives and slowly climbs back—it over-commits to the arm that looked best in the first state and must re-explore after the state flips. Sliding-Window UCB (30) ends up at the top (0.40) because discarding old data lets it track the current state fastest. Thompson Sampling settles in between bcs of its Bayesian updates which need more evidence than SW-UCB.There is an accuracy ceiling of about 40% while chance is 20%.
 
 # 15. Non-Stationary Rewards 
 
