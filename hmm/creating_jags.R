@@ -1,0 +1,26 @@
+###### CREATING JAGS MODELS #######
+
+# set the correct working directory:
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+##### Poor Model:
+
+cat(
+  'model {
+  y[1] ~ dbern(p[1])
+  z[1] ~ dbern(0.5)
+  p[1] <- z[1]*theta1 + (1 - z[1])*theta0
+
+  for (t in 2:N) {
+    z[t] ~ dbern(z[t-1]*pi[2] + (1 - z[t-1])*pi[1])
+    p[t] <- z[t]*theta1 + (1 - z[t])*theta0
+    y[t] ~ dbern(p[t])
+  }
+
+  theta0 ~ dbeta(1,1)
+  theta1 ~ dbeta(1,1)
+  pi[1] ~ dbeta(1,1)
+  pi[2] ~ dbeta(1,1)
+}
+', file = "poor_model.jags")
+
