@@ -7,7 +7,7 @@ output: html_document
 
 If you don't have it installed yet, **you first need to download and install JAGS to your local system**, then run this:
 ```{r}
-#install.packages("rjags")
+install.packages("rjags")
 ```
 
 
@@ -265,5 +265,173 @@ post_check <- coda.samples(model_check, c("theta0", "theta1", "pi"), n.iter = 10
 summary(post_check)
 ```
 
+# Setting up UCB
+
+UCB1 assigns each arm an “upper confidence bound” on its expected reward, and then always picks the arm with the highest bound.  Concretely, for arm i after **n_i** pulls and cumulative reward **S_i**, the empirical mean is $$\hat\mu_i = \frac{S_i}{n_i}$$. UCB1 adds another term that grows when **n_i** is small, namely
+$$\text{UCB}_i(t) = \hat\mu_i \;+\; \sqrt{\frac{2\ln t}{n_i}}$$. So intuitively, the $$\sqrt{2\ln t/n_i}$$ term is large when **n_i** is small (forcing exploration), and decays as **n_i** grows.As t increases, the **ln_t** term nudges you to revisit arms occasionally to maintain confidence.
 
 
+```{r}
+set.seed(456)
+# here we are setting the parameters: 
+K <- 3 #for 3 arms
+N <- 500 # for 500 time steps
+
+# this is our matrix of true thetas and filled by row for the 3 arms.
+theta <- matrix(c(0.2, 0.8,
+                  0.5, 0.7,
+                  0.3, 0.9),
+                nrow = K, byrow = TRUE)
+
+# these are our matrices of transition probabilities for each arm.
+pi_indiv <- list(
+  matrix(c(0.9, 0.1,
+           0.1, 0.9), 2, 2, byrow = TRUE),
+  matrix(c(0.85, 0.15,
+           0.2, 0.8), 2, 2, byrow = TRUE),
+  matrix(c(0.95, 0.05,
+           0.3, 0.7), 2, 2, byrow = TRUE)
+)
+
+
+# simulate latent states z_true and observed rewards y_true
+# we initialize our matrices of K by N dimensions of as matrices of 0s.
+# zs are our states while ys are our observed rewards.
+z_true <- matrix(0, K, N)
+y_true <- matrix(0, K, N)
+
+
+
+#for each arm we sample z from a Bernoulli and also y forma Bernoulli dependent on theta 
+for(i in 1:K){
+  z_true[i,1] <- rbinom(1,1,0.5) # the structure of this is nr of draws,bin,success probability.
+  y_true[i,1] <- rbinom(1,1, theta[i, z_true[i,1]+1]) # i do it this way so that when its z is 0 it picks column 1 but for 1 picks col 2
+  for(t in 2:N){ #then per iteration, I'm sampling 
+    z_true[i,t] <- rbinom(1,1, pi_indiv[[i]][ z_true[i,t-1]+1 , 2 ]) # the probability of transitioning into state 1 (column 2) from whatever your last state was. its coompl
+    y_true[i,t] <- rbinom(1,1, theta[i, z_true[i,t]+1 ])
+  }
+}
+
+# FIX build theta_selected as a real K×N matrix 
+theta_selected <- matrix(0, nrow = K, ncol = N)
+for(i in 1:K){
+  for(t in 1:N){
+    theta_selected[i, t] <- theta[i, z_true[i, t] + 1]
+  }
+}
+
+# for each arm select the index of the arm where theta selected is the largest.
+oracle_arm <- apply(theta_selected, 2, which.max)
+
+
+```
+
+Now we move on to initalizing the algorithm for this after having set the model.
+
+```{r}
+# Initializing algorithm structure 
+counts       <- rep(0, K)   # storing number of times each arm has been pulled
+sum_rewards  <- rep(0, K)   # cumulative reward per arm
+selected_arms_ucb    <- integer(N) # which arm is picked at time t
+received_rewards_ucb <- numeric(N) # reward at time t
+regret_ucb           <- numeric(N) # regret at time t
+
+# Initialization: play each arm once
+for(t in 1:K){
+  arm <- t
+  r   <- y_true[arm, t]
+  counts[arm]      <- 1
+  sum_rewards[arm] <- r
+  selected_arms_ucb[t]    <- arm
+  received_rewards_ucb[t] <- r
+  regret_ucb[t] <- theta_selected[oracle_arm[t], t] -
+                   theta_selected[arm, t] # best arm - selected arm
+}
+
+# to be repeaated 500 tims
+for(t in (K+1):N){
+  ucb_values <- numeric(K)
+  for(i in 1:K){
+    mu_hat <- sum_rewards[i] / counts[i] #nvr /0 bcs we initialized as 1
+    bonus  <- sqrt(2 * log(t) / counts[i])
+    ucb_values[i] <- mu_hat + bonus
+  }
+  arm <- which.max(ucb_values)
+  r   <- y_true[arm, t]
+  
+  counts[arm]      <- counts[arm] + 1 #adding count after the arm chosen again
+  sum_rewards[arm] <- sum_rewards[arm] + r #ading reward after arm chosen again
+  
+  selected_arms_ucb[t]    <- arm
+  received_rewards_ucb[t] <- r
+  regret_ucb[t] <- theta_selected[oracle_arm[t], t] -
+                   theta_selected[arm, t]
+}
+
+#Evaluate
+cumu_reward_ucb <- cumsum(received_rewards_ucb)
+cumu_regret_ucb <- cumsum(regret_ucb)
+
+
+par(mfrow=c(1,2))
+plot(cumu_reward_ucb, type="l", lwd=2,
+     xlab="Time", ylab="Cumulative Reward",
+     main="UCB: Cumulative Reward")
+plot(cumu_regret_ucb, type="l", lwd=2, col="red",
+     xlab="Time", ylab="Cumulative Regret",
+     main="UCB: Regret vs Oracle")
+```
+UCB’s growing reward line is basically straight bcs it quickly finds good arms and the roughly linear regret (≈80 by 500 pulls) simply reflects that in a changing (hidden‐Markov) environment you can never stop exploring.
+
+
+```{r}
+
+set.seed(2025)
+N_long <- 5000
+theta_true <- c(0.3, 0.9)       # theta0, theta1
+pi_true    <- c(0.10, 0.95)     # pi[1]=P(0 to1), pi[2]=P(1 to 1)
+
+#init
+z_long <- numeric(N_long)
+y_long <- numeric(N_long)
+
+# initial draw:
+rho0 <- pi_true[2] / sum(pi_true)   # P(z=0)
+z_long[1] <- rbinom(1,1, 1 - rho0)   # P(z=1)=rho1
+y_long[1] <- rbinom(1,1, theta_true[z_long[1]+1])
+
+# simulate
+for(t in 2:N_long) {
+  # Choose the correct transition probability into state 1, depending on whether z_{t-1} was 0 or 1
+  p_z1 <- ifelse(z_long[t-1]==0,
+                 pi_true[1],        # 0->1
+                 pi_true[2])        # 1->1
+  z_long[t] <- rbinom(1,1, p_z1)
+  y_long[t] <- rbinom(1,1, theta_true[z_long[t]+1])
+}
+
+
+
+
+# FIT IN JAGS USING poor_model.jags
+
+data_long <- list(
+  y = y_long,
+  N = N_long
+)
+
+model_long <- jags.model(
+  file = "poor_model.jags",
+  data = data_long,
+  n.chains = 2,
+  quiet = TRUE
+)
+update(model_long, 1000)  
+post_long <- coda.samples(
+  model = model_long,
+  variable.names = c("theta0","theta1","pi[1]","pi[2]"),
+  n.iter = 1000
+)
+
+print( summary(post_long) )
+```
