@@ -106,7 +106,7 @@ for (i in 1:K) {
 }
 ```
 
-However, we will first consider a setup where we will first investigate a scnario where the ground truth is that we have arm-specifc states.
+However, we will first consider a setup where we will first investigate a scenario where the ground truth is that we have arm-specifc states.
 
 ---
 
@@ -119,7 +119,7 @@ This section shows a simulation where we choose one arm at each time step using 
 ```{r simulate-truth}
 set.seed(456)
 K <- 3
-N <- 1000
+N <- 500
 
 theta <- matrix(c(0.2, 0.8,
                   0.5, 0.7,
@@ -164,44 +164,59 @@ selected_arms <- numeric(N)
 received_rewards <- numeric(N)
 regret <- numeric(N)
 
-oracle_rewards <- apply(y_true, 1, sum)
-oracle_arm <- which.max(oracle_rewards)
+# This matrix contains the probability of each arm at each time step:
+theta_selected <- matrix(0, nrow = K, ncol = N)
+# We are computing the arm that has the highest expected reward at each time, as the oracle:
+for (i in 1:K) {
+  for (t in 1:N) {
+    theta_selected[i, t] <- theta[i, z_true[i, t] + 1]
+  }
+}
+oracle_arm <- apply(theta_selected, 2, which.max)
+
+
+posterior_matrices <- rep(list(1), K)
+last_states <- list()
+a_t <- sample(1:K, 1) # pick first arm to pull
 
 for (t in 1:N) {
   sampled_values <- numeric(K)
-
-  for (i in 1:K) {
-    if (length(observed_rewards[[i]]) >= 2) {
-      data_list <- list(y = observed_rewards[[i]], N = length(observed_rewards[[i]]))
-      model <- jags.model(model_file, data = data_list, n.chains = 1, quiet = TRUE)
-      update(model, 100)
-      post <- coda.samples(model, c("theta0", "theta1", "pi"), n.iter = 100)
-      post_matrix <- as.matrix(post)
-      idx <- sample(1:nrow(post_matrix), 1)
-      theta0 <- post_matrix[idx, "theta0"]
-      theta1 <- post_matrix[idx, "theta1"]
-      pi1 <- post_matrix[idx, "pi[1]"]
-      pi2 <- post_matrix[idx, "pi[2]"]
-      pz0 <- 0.5
-      pz1 <- 0.5
-      for (s in 1:5) {
-        new_pz0 <- pz0 * (1 - pi1) + pz1 * pi2
-        new_pz1 <- pz0 * pi1 + pz1 * (1 - pi2)
-        norm <- new_pz0 + new_pz1
-        pz0 <- new_pz0 / norm
-        pz1 <- new_pz1 / norm
-      }
-      sampled_values[i] <- pz0 * theta0 + pz1 * theta1
-    } else {
-      sampled_values[i] <- runif(1)
+  
+  if (length(observed_rewards[[a_t]]) >= 2) {
+    
+    data_list <- list(y = observed_rewards[[a_t]], N = length(observed_rewards[[a_t]]))
+    model <- jags.model(model_file, data = data_list, n.chains = 1, quiet = TRUE)
+    update(model, 1000)
+    
+    post <- coda.samples(model, c("theta0", "theta1", "pi", paste0("z[", length(observed_rewards[[a_t]]), "]")), n.iter = 100)
+    post_matrix <- as.matrix(post)
+    
+    posterior_matrices[[a_t]] <- post_matrix
+    last_states[[a_t]] <-length(observed_rewards[[a_t]])
+  }
+  
+  for (l in 1:K){
+    
+    if (!is.null(nrow(posterior_matrices[[l]])) > 0){
+      idx <- sample(1:nrow(posterior_matrices[[l]]), 1)
+      theta0 <- posterior_matrices[[l]][idx, "theta0"]
+      theta1 <- posterior_matrices[[l]][idx, "theta1"]
+      pi1 <- posterior_matrices[[l]][idx, "pi[1]"]
+      pi2 <- posterior_matrices[[l]][idx, "pi[2]"]
+      z_t <- posterior_matrices[[l]][idx, paste0("z[", last_states[[l]], "]")]
+      sampled_values[l] <- (1-z_t)* theta0 + z_t * theta1
+    }
+    else {
+    sampled_values[l] <- runif(1)
     }
   }
-
+  
   a_t <- which.max(sampled_values)
   selected_arms[t] <- a_t
   r_t <- y_true[a_t, t]
   received_rewards[t] <- r_t
-  regret[t] <- y_true[oracle_arm, t] - r_t
+  # we use the expected regret:
+  regret[t] <- theta_selected[oracle_arm[t], t] - theta[selected_arms[t], z_true[selected_arms[t], t] + 1]
   observed_rewards[[a_t]] <- c(observed_rewards[[a_t]], r_t)
 }
 
@@ -216,16 +231,39 @@ plot(cumulative_regret, type = "l", col = "red", lwd = 2,
 ```
 Based on the **Cumulative Rewards**, I would say Thompson Sampling is performing robustly, selecting mostly good arms over the long run.
 
-Based on the **Cumulative Regret vs Oracle**, we see that regret increases steadily. AT 1000, it is at 40 which is relatively small compared to the total reward (>500). 
+Based on the **Cumulative Regret vs Oracle**, we see that regret increases steadily (this is the expected regret). AT 1000, it is at 80 which is relatively small compared to the total reward (>500). 
 
-However, regret keeps growing! I would argue that this suggests that the model still has not converged or that some of the posterior estimates might be too conservative. I guess this all has to do with the setup, that arms are in different states and we loose track of the state in which an arm is in, but please let me know what you think?
-
-I also don't really see a point in time bases on these results, where I would say, yeah, know I can tell it is definitely performing much better.
+(I also don't really see a point in time bases on these results, where I would say, yeah, know I can tell it is definitely performing much better.)
 
 Performance is still good, but there is room for improvement, especially in faster convergence or better identification of the best arm!
 
 
+## 4. Posterior Recovery Check on Long Simulation
 
+```{r}
+set.seed(999)
+N_long <- 10000
+theta_true <- c(0.3, 0.9)
+pi_true <- c(0.10, 0.95)  # pi[1] = P(0 to 1), pi[2] = P(1 to 1)
+
+# Simulate z and y
+z_check <- numeric(N_long)
+y_check <- numeric(N_long)
+z_check[1] <- rbinom(1, 1, pi_true[1] / (pi_true[1] + pi_true[2]))  # start in stationary dist
+y_check[1] <- rbinom(1, 1, ifelse(z_check[1] == 0, theta_true[1], theta_true[2]))
+
+for (t in 2:N_long) {
+  z_check[t] <- rbinom(1, 1, ifelse(z_check[t-1] == 0, pi_true[1], pi_true[2]))
+  y_check[t] <- rbinom(1, 1, ifelse(z_check[t] == 0, theta_true[1], theta_true[2]))
+}
+
+# Run JAGS
+data_check <- list(y = y_check, N = N_long)
+model_check <- jags.model("poor_model.jags", data = data_check, n.chains = 1, quiet = TRUE)
+update(model_check, 1000)
+post_check <- coda.samples(model_check, c("theta0", "theta1", "pi"), n.iter = 1000)
+summary(post_check)
+```
 
 
 
