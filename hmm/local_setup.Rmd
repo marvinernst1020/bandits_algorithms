@@ -267,7 +267,7 @@ summary(post_check)
 
 # Setting up UCB
 
-UCB1 assigns each arm an “upper confidence bound” on its expected reward, and then always picks the arm with the highest bound.  Concretely, for arm i after **n_i** pulls and cumulative reward **S_i**, the empirical mean is $$\hat\mu_i = \frac{S_i}{n_i}$$. UCB1 adds another term that grows when **n_i** is small, namely
+UCB1 assigns each arm an “upper confidence bound” on its expected reward, and then always picks the arm with the highest bound. Concretely, for arm i after **n_i** pulls and cumulative reward **S_i**, the empirical mean is $$\hat\mu_i = \frac{S_i}{n_i}$$. UCB1 adds another term that grows when **n_i** is small, namely
 $$\text{UCB}_i(t) = \hat\mu_i \;+\; \sqrt{\frac{2\ln t}{n_i}}$$. So intuitively, the $$\sqrt{2\ln t/n_i}$$ term is large when **n_i** is small (forcing exploration), and decays as **n_i** grows.As t increases, the **ln_t** term nudges you to revisit arms occasionally to maintain confidence.
 
 
@@ -312,7 +312,7 @@ for(i in 1:K){
   }
 }
 
-# FIX build theta_selected as a real K×N matrix 
+# FIX the var?
 theta_selected <- matrix(0, nrow = K, ncol = N)
 for(i in 1:K){
   for(t in 1:N){
@@ -385,53 +385,114 @@ UCB’s growing reward line is basically straight bcs it quickly finds good arms
 
 
 ```{r}
+library(rjags)
 
-set.seed(2025)
-N_long <- 5000
-theta_true <- c(0.3, 0.9)       # theta0, theta1
-pi_true    <- c(0.10, 0.95)     # pi[1]=P(0 to1), pi[2]=P(1 to 1)
+K        <- 2      # arms
+T_max    <- 200   # total pulls
+burn_in  <- 700   # JAGS burn-in (im gonna change this to 1000 but its too time expensive now)
+n_samps  <-  100   # posterior draws per arm per round
 
-#init
-z_long <- numeric(N_long)
-y_long <- numeric(N_long)
+#true parameters for simulating rewards
+theta_true <- c(0.3, 0.9)
+pi_true    <- c(0.10, 0.95)
 
-# initial draw:
-rho0 <- pi_true[2] / sum(pi_true)   # P(z=0)
-z_long[1] <- rbinom(1,1, 1 - rho0)   # P(z=1)=rho1
-y_long[1] <- rbinom(1,1, theta_true[z_long[1]+1])
+#simulate underlying z & y for each arm up to T_max
+sim_z <- matrix(0, nrow=K, ncol=T_max)
+sim_y <- matrix(0, nrow=K, ncol=T_max)
 
-# simulate
-for(t in 2:N_long) {
-  # Choose the correct transition probability into state 1, depending on whether z_{t-1} was 0 or 1
-  p_z1 <- ifelse(z_long[t-1]==0,
-                 pi_true[1],        # 0->1
-                 pi_true[2])        # 1->1
-  z_long[t] <- rbinom(1,1, p_z1)
-  y_long[t] <- rbinom(1,1, theta_true[z_long[t]+1])
+for(i in 1:K){
+  
+  rho0       <- pi_true[2] / sum(pi_true)
+  sim_z[i,1] <- rbinom(1, 1, 1 - rho0)
+  sim_y[i,1] <- rbinom(1, 1, theta_true[sim_z[i,1] + 1])
+  for(t in 2:T_max){
+    p01        <- ifelse(sim_z[i,t-1]==0, pi_true[1], pi_true[2])
+    sim_z[i,t] <- rbinom(1, 1, p01)
+    sim_y[i,t] <- rbinom(1, 1, theta_true[sim_z[i,t] + 1])
+  }
 }
 
+hist_y     <- vector("list", K)
+for(i in 1:K) hist_y[[i]] <- integer(0)
+chosen_arm <- integer(T_max)
+rewards    <- integer(T_max)
 
+for(t in 1:T_max){
+  ucb_index <- numeric(K)
+  for(i in 1:K){
+    n_i <- length(hist_y[[i]])
+    if(n_i == 0) {
+      # initial pull
+      ucb_index[i] <- Inf
+    } else {
+      data_jags <- list(y = hist_y[[i]], N = n_i)
+      jm <- jags.model(file     = "poor_model.jags",
+                       data     = data_jags,
+                       n.chains = 2, quiet=TRUE)
+      update(jm, burn_in)
 
+      # b) sample theta0, theta1 and last z[n_i]
+      vars <- c("theta0","theta1", paste0("z[", n_i, "]"))
+      post <- coda.samples(model = jm,
+                           variable.names = vars,
+                           n.iter = n_samps)
+      M    <- as.matrix(post)
+      th0  <- M[,"theta0"]
+      th1  <- M[,"theta1"]
+      zN   <- M[,paste0("z[",n_i,"]")]
 
-# FIT IN JAGS USING poor_model.jags
+      # c) compound‐theta 
+      th_comp <- ifelse(zN == 1, th1, th0)
 
-data_long <- list(
-  y = y_long,
-  N = N_long
-)
+      # d) compute UCB = mean + (sd/sqrt(n_i))*ln(t)
+      ucb_index[i] <- mean(th_comp) +
+                      ( sd(th_comp) / sqrt(n_i) ) * log(t)
+    }
+  }
 
-model_long <- jags.model(
-  file = "poor_model.jags",
-  data = data_long,
-  n.chains = 2,
-  quiet = TRUE
-)
-update(model_long, 1000)  
-post_long <- coda.samples(
-  model = model_long,
-  variable.names = c("theta0","theta1","pi[1]","pi[2]"),
-  n.iter = 1000
-)
+  # pick & pull the best arm
+  arm_t <- which.max(ucb_index)
+  chosen_arm[t] <- arm_t
 
-print( summary(post_long) )
+  # “observe” its reward at time t
+  r_t <- sim_y[arm_t, t]
+  rewards[t] <- r_t
+
+  # update its history
+  hist_y[[arm_t]] <- c(hist_y[[arm_t]], r_t)
+}
+
+cat("Total reward =", sum(rewards), "out of", T_max, "\n")
+for(i in 1:K){
+  cat("Arm", i, "- pulls:", length(hist_y[[i]]),
+      "mean reward:", round(mean(hist_y[[i]]),3), "\n")
+}
 ```
+
+
+```{r}
+for(i in 1:K){
+  Ni <- length(hist_y[[i]])
+  cat("\n= Arm", i, "JAGS fit; N =", Ni, "=\n")
+  data_i <- list(y = hist_y[[i]], N = Ni)
+
+  jm_i <- jags.model(file     = "poor_model.jags",
+                     data     = data_i,
+                     n.chains = 2, quiet = FALSE)
+  
+  update(jm_i, 2000)
+
+  post_i <- coda.samples(model         = jm_i,
+                         variable.names= c("pi[1]","pi[2]",
+                                           "theta0","theta1"),
+                         n.iter         = 1000)
+  print(summary(post_i))
+}
+```
+
+
+
+
+
+
+
