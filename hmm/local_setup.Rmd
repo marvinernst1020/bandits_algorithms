@@ -387,85 +387,87 @@ UCB’s growing reward line is basically straight bcs it quickly finds good arms
 ```{r}
 library(rjags)
 
-K        <- 2      # arms
-T_max    <- 200   # total pulls
-burn_in  <- 700   # JAGS burn-in (im gonna change this to 1000 but its too time expensive now)
-n_samps  <-  100   # posterior draws per arm per round
+K       <- 2        # number of arms
+T_max   <- 200      # total pulls (increase later)
+burn_in <- 1000     # JAGS burn-in
+n_samps <-  500     # posterior draws per arm per round
 
-#true parameters for simulating rewards
+# true params for simulating rewards
 theta_true <- c(0.3, 0.9)
 pi_true    <- c(0.10, 0.95)
 
-#simulate underlying z & y for each arm up to T_max
+#pre simulate 
 sim_z <- matrix(0, nrow=K, ncol=T_max)
 sim_y <- matrix(0, nrow=K, ncol=T_max)
-
 for(i in 1:K){
-  
-  rho0       <- pi_true[2] / sum(pi_true)
-  sim_z[i,1] <- rbinom(1, 1, 1 - rho0)
-  sim_y[i,1] <- rbinom(1, 1, theta_true[sim_z[i,1] + 1])
+  rho0       <- pi_true[2]/sum(pi_true)
+  sim_z[i,1] <- rbinom(1,1,1-rho0)
+  sim_y[i,1] <- rbinom(1,1,theta_true[ sim_z[i,1]+1 ])
   for(t in 2:T_max){
     p01        <- ifelse(sim_z[i,t-1]==0, pi_true[1], pi_true[2])
-    sim_z[i,t] <- rbinom(1, 1, p01)
-    sim_y[i,t] <- rbinom(1, 1, theta_true[sim_z[i,t] + 1])
+    sim_z[i,t] <- rbinom(1,1,p01)
+    sim_y[i,t] <- rbinom(1,1,theta_true[ sim_z[i,t]+1 ])
   }
 }
 
-hist_y     <- vector("list", K)
+hist_y      <- vector("list", K)
 for(i in 1:K) hist_y[[i]] <- integer(0)
-chosen_arm <- integer(T_max)
-rewards    <- integer(T_max)
+
+posteriors  <- vector("list", K)
+for(i in 1:K) posteriors[[i]] <- vector("list", T_max)
+
+chosen_arm  <- integer(T_max)
+rewards     <- integer(T_max)
 
 for(t in 1:T_max){
   ucb_index <- numeric(K)
+
   for(i in 1:K){
     n_i <- length(hist_y[[i]])
-    if(n_i == 0) {
-      # initial pull
+
+    if(n_i == 0){
+      # never pulled → force one pull
       ucb_index[i] <- Inf
+
     } else {
-      data_jags <- list(y = hist_y[[i]], N = n_i)
-      jm <- jags.model(file     = "poor_model.jags",
-                       data     = data_jags,
-                       n.chains = 2, quiet=TRUE)
+      dat <- list(y = hist_y[[i]], N = n_i)
+      jm  <- jags.model("poor_model.jags",
+                        data     = dat,
+                        n.chains = 2, quiet=TRUE)
       update(jm, burn_in)
 
-      # b) sample theta0, theta1 and last z[n_i]
+      # sample theta0, theta1, z[n_i]
       vars <- c("theta0","theta1", paste0("z[", n_i, "]"))
-      post <- coda.samples(model = jm,
-                           variable.names = vars,
-                           n.iter = n_samps)
-      M    <- as.matrix(post)
-      th0  <- M[,"theta0"]
-      th1  <- M[,"theta1"]
-      zN   <- M[,paste0("z[",n_i,"]")]
+      post <- coda.samples(jm, variable.names=vars, n.iter=n_samps)
+      M    <- as.matrix(post)  # dims = (n_chains*n_samps) × 3
 
-      # c) compound‐theta 
-      th_comp <- ifelse(zN == 1, th1, th0)
+      posteriors[[i]][[t]] <- M
 
-      # d) compute UCB = mean + (sd/sqrt(n_i))*ln(t)
-      ucb_index[i] <- mean(th_comp) +
-                      ( sd(th_comp) / sqrt(n_i) ) * log(t)
+      theta0 <- M[,"theta0"]
+      theta1 <- M[,"theta1"]
+      zN      <- M[,paste0("z[",n_i,"]")]
+
+      # compound-theta draws
+      tilde   <- ifelse(zN==0, theta0, theta1)
+
+      # new UCB = mean + (sd/sqrt(n_i)) * ln(t)
+      ucb_index[i] <- mean(tilde) +
+                      ( sd(tilde)/sqrt(n_i) ) * log(t)
     }
   }
 
-  # pick & pull the best arm
-  arm_t <- which.max(ucb_index)
-  chosen_arm[t] <- arm_t
-
-  # “observe” its reward at time t
-  r_t <- sim_y[arm_t, t]
-  rewards[t] <- r_t
-
-  # update its history
-  hist_y[[arm_t]] <- c(hist_y[[arm_t]], r_t)
+  # pick best arm, observe reward, update history
+  arm_t          <- which.max(ucb_index)
+  chosen_arm[t]  <- arm_t
+  r_t            <- sim_y[arm_t, t]
+  rewards[t]     <- r_t
+  hist_y[[arm_t]]<- c(hist_y[[arm_t]], r_t)
 }
 
 cat("Total reward =", sum(rewards), "out of", T_max, "\n")
 for(i in 1:K){
-  cat("Arm", i, "- pulls:", length(hist_y[[i]]),
-      "mean reward:", round(mean(hist_y[[i]]),3), "\n")
+  cat(sprintf("Arm %d – pulls: %3d  mean reward: %.3f\n",
+              i, length(hist_y[[i]]), mean(hist_y[[i]])))
 }
 ```
 
@@ -489,10 +491,16 @@ for(i in 1:K){
   print(summary(post_i))
 }
 ```
-
-
-
-
-
+```{r}
+df <- data.frame(
+  t = 1:T_max,
+  cum_reward = cumsum(rewards)
+)
+ggplot(df, aes(x=t, y=cum_reward)) +
+  geom_line() +
+  labs(title="Cumulative Reward Over Time",
+       x="Round", y="Cumulative successes") +
+  theme_minimal()
+```
 
 
