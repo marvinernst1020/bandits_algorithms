@@ -27,7 +27,7 @@ We consider a stationary stochastic multi-armed bandit problem with $K = 3$ arms
 - Arm 2: $p_2 = 0.60$
 - Arm 3: $p_3 = 0.40$
 
-The environment is stationary, i.e., the reward distributions do not change over time. We run each algorithm for $T = 1000$ time steps and repeat the simulation for 100 independent runs to compute average performance metrics.
+The environment is stationary, i.e., the reward distributions do not change over time. We run each algorithm for $T = 1000$ time steps and repeat the simulation for 1000 independent runs to compute average performance metrics.
 
 ## Bandit Algorithms
 
@@ -38,18 +38,21 @@ We evaluate the following classical algorithms:
 3. **Thompson Sampling** - Bayesian algorithm sampling from posterior
 
 ```{r bandit-functions}
-simulate_bandit <- function(algorithm, probs, T = 1000) {
+simulate_bandit_full <- function(algorithm, probs, T = 1000) {
   K <- length(probs)
   counts <- rep(0, K)
   rewards <- rep(0, K)
+  best_arm <- which.max(probs)
+  
+  inst_regret <- numeric(T)
   total_regret <- numeric(T)
+  chosen_arm <- numeric(T)
   regret <- 0
-  best_prob <- max(probs)
   
   for (t in 1:T) {
     if (algorithm == "ucb") {
       if (any(counts == 0)) {
-        idx <- which(counts == 0)[1]  # Pull each arm once
+        idx <- which(counts == 0)[1]
       } else {
         ucb_values <- rewards / counts + sqrt(2 * log(t) / counts)
         idx <- which.max(ucb_values)
@@ -67,14 +70,23 @@ simulate_bandit <- function(algorithm, probs, T = 1000) {
       samples <- rbeta(K, 1 + rewards, 1 + counts - rewards)
       idx <- which.max(samples)
     }
-    
+
     reward <- rbinom(1, 1, probs[idx])
     counts[idx] <- counts[idx] + 1
     rewards[idx] <- rewards[idx] + reward
-    regret <- regret + (best_prob - probs[idx])
+    
+    regret <- regret + (max(probs) - probs[idx])
     total_regret[t] <- regret
+    inst_regret[t] <- max(probs) - probs[idx]
+    chosen_arm[t] <- idx
   }
-  return(total_regret)
+  
+  list(
+    cumulative = total_regret,
+    instantaneous = inst_regret,
+    optimal_pulls = chosen_arm == best_arm,
+    last_simple_regret = max(probs) - probs[which.max(rewards / counts)]
+  )
 }
 ```
 
@@ -85,37 +97,103 @@ set.seed(42)
 probs <- c(0.7, 0.6, 0.4)
 T <- 1000
 runs <- 1000
+methods <- c("ucb", "ucb-tuned", "ts")
+labels <- c("Standard UCB", "Tuned UCB", "Thompson Sampling")
 
-ucb_results <- replicate(runs, simulate_bandit("ucb", probs, T))
-ucb_tuned_results <- replicate(runs, simulate_bandit("ucb-tuned", probs, T))
-ts_results <- replicate(runs, simulate_bandit("ts", probs, T))
+simulate_all <- function(method) {
+  replicate(runs, simulate_bandit_full(method, probs, T), simplify = FALSE)
+}
 
-df <- data.frame(
-  time = 1:T,
-  Standard_UCB = rowMeans(ucb_results),
-  Tuned_UCB = rowMeans(ucb_tuned_results),
-  Thompson_Sampling = rowMeans(ts_results)
-) %>%
-  pivot_longer(cols = -time, names_to = "Algorithm", values_to = "Regret")
+results <- lapply(methods, simulate_all)
+names(results) <- labels
 ```
 
 ## Cumulative Regret over Time
 
 ```{r}
-ggplot(df, aes(x = time, y = Regret, color = Algorithm)) +
+cumulative_df <- do.call(rbind, lapply(names(results), function(name) {
+  do.call(cbind, lapply(results[[name]], function(r) r$cumulative)) |>
+    rowMeans() |>
+    data.frame(time = 1:T, Regret = _) |>
+    mutate(Algorithm = name)
+})) |>
+  bind_rows()
+
+ggplot(cumulative_df, aes(x = time, y = Regret, color = Algorithm)) +
   geom_line(size = 0.8) +
-  scale_color_manual(values = c("Standard_UCB" = "#D62728", 
-                                "Thompson_Sampling" = "#1F77B4", 
-                                "Tuned_UCB" = "#2CA02C")) +
+  scale_color_manual(values = c("Standard UCB" = "#D62728", 
+                                "Thompson Sampling" = "#1F77B4", 
+                                "Tuned UCB" = "#2CA02C")) +
   labs(x = "Time Step", y = "Average Cumulative Regret") +
   theme_classic(base_size = 12) +
-  theme(
-    legend.position = "bottom",
-    legend.title = element_blank(),
-    axis.text = element_text(color = "black"),
-    panel.grid = element_blank()
-  )
+  theme(legend.position = "bottom", legend.title = element_blank())
 ```
+
+## Instantaneous Regret over Time
+
+```{r}
+inst_df <- do.call(rbind, lapply(names(results), function(name) {
+  do.call(cbind, lapply(results[[name]], function(r) r$instantaneous)) |>
+    rowMeans() |>
+    data.frame(time = 1:T, InstantRegret = _) |>
+    mutate(Algorithm = name)
+})) |>
+  bind_rows()
+
+ggplot(inst_df, aes(x = time, y = InstantRegret, color = Algorithm)) +
+  geom_line(size = 0.7, alpha = 0.85) +
+  scale_color_manual(values = c("Standard UCB" = "#D62728", 
+                                "Thompson Sampling" = "#1F77B4", 
+                                "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Time Step", y = "Instantaneous Regret") +
+  theme_classic(base_size = 12) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+
+## Percentage of Optimal Arm Pulls
+
+```{r}
+opt_df <- do.call(rbind, lapply(names(results), function(name) {
+  do.call(cbind, lapply(results[[name]], function(r) r$optimal_pulls)) |>
+    rowMeans() |>
+    data.frame(time = 1:T, OptimalRate = _) |>
+    mutate(Algorithm = name)
+})) |>
+  bind_rows()
+
+ggplot(opt_df, aes(x = time, y = OptimalRate, color = Algorithm)) +
+  geom_line(size = 0.7) +
+  scale_color_manual(values = c("Standard UCB" = "#D62728", 
+                                "Thompson Sampling" = "#1F77B4", 
+                                "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Time Step", y = "Optimal Arm Selection Rate") +
+  theme_classic(base_size = 12) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+## Simple Regret
+
+Not correct yet .... 
+
+```{r}
+simple_df <- do.call(rbind, lapply(names(results), function(name) {
+  sapply(results[[name]], function(r) r$last_simple_regret) |>
+    data.frame(SimpleRegret = _, Algorithm = name)
+})) |>
+  bind_rows()
+
+ggplot(simple_df, aes(x = SimpleRegret, fill = Algorithm)) +
+  geom_histogram(alpha = 0.65, bins = 30, position = "identity", color = "white") +
+  scale_fill_manual(values = c("Standard UCB" = "#D62728", 
+                               "Thompson Sampling" = "#1F77B4", 
+                               "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Final Simple Regret", y = "Frequency") +
+  theme_classic(base_size = 12) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+
 
 ## Histogram of Final Regret
 
