@@ -1,0 +1,156 @@
+---
+title: "Baseline Bandit Simulation"
+author: "Marvin Ernst, Oriol Gelabert, Melisa Vadenja"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+packages <- c("ggplot2", "dplyr", "tidyr", "ggthemes")
+
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+```
+
+# Baseline Bandit Simulation
+
+## Static Bandit Setup
+
+We consider a stationary stochastic multi-armed bandit problem with $K = 3$ arms. Each arm returns a reward drawn from a Bernoulli distribution with success probabilities:
+
+- Arm 1: $p_1 = 0.70$
+- Arm 2: $p_2 = 0.60$
+- Arm 3: $p_3 = 0.40$
+
+The environment is stationary, i.e., the reward distributions do not change over time. We run each algorithm for $T = 1000$ time steps and repeat the simulation for 100 independent runs to compute average performance metrics.
+
+## Bandit Algorithms
+
+We evaluate the following classical algorithms:
+
+1. **UCB1** - Upper Confidence Bound (Auer et al., 2002)
+2. **Tuned UCB** - Variant of UCB with empirical variance adjustment
+3. **Thompson Sampling** - Bayesian algorithm sampling from posterior
+
+```{r bandit-functions}
+simulate_bandit <- function(algorithm, probs, T = 1000) {
+  K <- length(probs)
+  counts <- rep(0, K)
+  rewards <- rep(0, K)
+  total_regret <- numeric(T)
+  regret <- 0
+  best_prob <- max(probs)
+  
+  for (t in 1:T) {
+    if (algorithm == "ucb") {
+      if (any(counts == 0)) {
+        idx <- which(counts == 0)[1]  # Pull each arm once
+      } else {
+        ucb_values <- rewards / counts + sqrt(2 * log(t) / counts)
+        idx <- which.max(ucb_values)
+      }
+    } else if (algorithm == "ucb-tuned") {
+      if (any(counts == 0)) {
+        idx <- which(counts == 0)[1]
+      } else {
+        means <- rewards / counts
+        variances <- pmin(1/4, means * (1 - means) + sqrt(2 * log(t) / counts))
+        ucb_tuned_values <- means + sqrt(log(t) / counts * variances)
+        idx <- which.max(ucb_tuned_values)
+      }
+    } else if (algorithm == "ts") {
+      samples <- rbeta(K, 1 + rewards, 1 + counts - rewards)
+      idx <- which.max(samples)
+    }
+    
+    reward <- rbinom(1, 1, probs[idx])
+    counts[idx] <- counts[idx] + 1
+    rewards[idx] <- rewards[idx] + reward
+    regret <- regret + (best_prob - probs[idx])
+    total_regret[t] <- regret
+  }
+  return(total_regret)
+}
+```
+
+## Simulation and Results
+
+```{r simulation}
+set.seed(42)
+probs <- c(0.7, 0.6, 0.4)
+T <- 1000
+runs <- 1000
+
+ucb_results <- replicate(runs, simulate_bandit("ucb", probs, T))
+ucb_tuned_results <- replicate(runs, simulate_bandit("ucb-tuned", probs, T))
+ts_results <- replicate(runs, simulate_bandit("ts", probs, T))
+
+df <- data.frame(
+  time = 1:T,
+  Standard_UCB = rowMeans(ucb_results),
+  Tuned_UCB = rowMeans(ucb_tuned_results),
+  Thompson_Sampling = rowMeans(ts_results)
+) %>%
+  pivot_longer(cols = -time, names_to = "Algorithm", values_to = "Regret")
+```
+
+## Cumulative Regret over Time
+
+```{r}
+ggplot(df, aes(x = time, y = Regret, color = Algorithm)) +
+  geom_line(size = 0.8) +
+  scale_color_manual(values = c("Standard_UCB" = "#D62728", 
+                                "Thompson_Sampling" = "#1F77B4", 
+                                "Tuned_UCB" = "#2CA02C")) +
+  labs(x = "Time Step", y = "Average Cumulative Regret") +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    axis.text = element_text(color = "black"),
+    panel.grid = element_blank()
+  )
+```
+
+## Histogram of Final Regret
+
+Store the result:
+```{r}
+final_regrets <- data.frame(
+  Standard_UCB = ucb_results[T, ],
+  Tuned_UCB = ucb_tuned_results[T, ],
+  Thompson_Sampling = ts_results[T, ]
+) %>%
+  pivot_longer(cols = everything(), names_to = "Algorithm", values_to = "FinalRegret")
+
+final_regrets$Algorithm <- factor(final_regrets$Algorithm,
+                                  levels = c("Standard_UCB", "Thompson_Sampling", "Tuned_UCB"))
+```
+
+Plot:
+```{r}
+ggplot(final_regrets, aes(x = FinalRegret, fill = Algorithm)) +
+  geom_histogram(alpha = 0.65, bins = 30, position = "identity", color = "white") +
+  scale_fill_manual(values = c("Standard_UCB" = "#D62728", 
+                               "Thompson_Sampling" = "#1F77B4", 
+                               "Tuned_UCB" = "#2CA02C")) +
+  labs(x = "Final Cumulative Regret", y = "Frequency") +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    axis.text = element_text(color = "black"),
+    panel.grid = element_blank()
+  )
+```
+
+
+## Summary
+
+The results show clear differences in algorithm performance. Standard UCB accumulates significantly more regret over time, indicating inefficient exploration. In contrast, Tuned UCB and Thompson Sampling perform substantially better, with Tuned UCB showing the lowest cumulative regret and highest stability across runs. This suggests that accounting for reward variance or using Bayesian sampling leads to faster and more reliable convergence in static environments.
+
