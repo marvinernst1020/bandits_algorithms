@@ -38,54 +38,57 @@ We evaluate the following classical algorithms:
 3. **Thompson Sampling** - Bayesian algorithm sampling from posterior
 
 ```{r bandit-functions}
-simulate_bandit_full <- function(algorithm, probs, T = 1000) {
+simulate_bandit_full <- function(algorithm, probs, T = 1000, warmup_order = sample(1:length(probs))) {
   K <- length(probs)
   counts <- rep(0, K)
   rewards <- rep(0, K)
   best_arm <- which.max(probs)
-  
+
   inst_regret <- numeric(T)
   total_regret <- numeric(T)
   chosen_arm <- numeric(T)
   regret <- 0
-  
+
   for (t in 1:T) {
-    if (algorithm == "ucb") {
-      if (any(counts == 0)) {
-        idx <- which(counts == 0)[1]
-      } else {
+    if (t <= K) {
+      idx <- warmup_order[t]
+    } else {
+      if (algorithm == "ucb") {
         ucb_values <- rewards / counts + sqrt(2 * log(t) / counts)
         idx <- which.max(ucb_values)
-      }
-    } else if (algorithm == "ucb-tuned") {
-      if (any(counts == 0)) {
-        idx <- which(counts == 0)[1]
-      } else {
+      } else if (algorithm == "ucb-tuned") {
         means <- rewards / counts
         variances <- pmin(1/4, means * (1 - means) + sqrt(2 * log(t) / counts))
         ucb_tuned_values <- means + sqrt(log(t) / counts * variances)
         idx <- which.max(ucb_tuned_values)
+      } else if (algorithm == "ts") {
+        samples <- rbeta(K, 1 + rewards, 1 + counts - rewards)
+        idx <- which.max(samples)
       }
-    } else if (algorithm == "ts") {
-      samples <- rbeta(K, 1 + rewards, 1 + counts - rewards)
-      idx <- which.max(samples)
     }
 
     reward <- rbinom(1, 1, probs[idx])
     counts[idx] <- counts[idx] + 1
     rewards[idx] <- rewards[idx] + reward
-    
+
     regret <- regret + (max(probs) - probs[idx])
     total_regret[t] <- regret
     inst_regret[t] <- max(probs) - probs[idx]
     chosen_arm[t] <- idx
   }
-  
+
+  last_simple_regret <- if (any(counts == 0)) {
+    NA
+  } else {
+    estimated_means <- rewards / counts
+    max(probs) - probs[which.max(estimated_means)]
+  }
+
   list(
     cumulative = total_regret,
     instantaneous = inst_regret,
     optimal_pulls = chosen_arm == best_arm,
-    last_simple_regret = max(probs) - probs[which.max(rewards / counts)]
+    last_simple_regret = last_simple_regret
   )
 }
 ```
@@ -96,12 +99,15 @@ simulate_bandit_full <- function(algorithm, probs, T = 1000) {
 set.seed(42)
 probs <- c(0.7, 0.6, 0.4)
 T <- 1000
-runs <- 1000
+runs <- 10000
 methods <- c("ucb", "ucb-tuned", "ts")
 labels <- c("Standard UCB", "Tuned UCB", "Thompson Sampling")
 
 simulate_all <- function(method) {
-  replicate(runs, simulate_bandit_full(method, probs, T), simplify = FALSE)
+  replicate(runs, {
+    warmup <- sample(1:3)
+    simulate_bandit_full(method, probs, T, warmup_order = warmup)
+  }, simplify = FALSE)
 }
 
 results <- lapply(methods, simulate_all)
@@ -129,27 +135,40 @@ ggplot(cumulative_df, aes(x = time, y = Regret, color = Algorithm)) +
   theme(legend.position = "bottom", legend.title = element_blank())
 ```
 
-## Instantaneous Regret over Time
+## Histogram of Final Regret
 
+Extract final cumulative regret from results:
 ```{r}
-inst_df <- do.call(rbind, lapply(names(results), function(name) {
-  do.call(cbind, lapply(results[[name]], function(r) r$instantaneous)) |>
-    rowMeans() |>
-    data.frame(time = 1:T, InstantRegret = _) |>
-    mutate(Algorithm = name)
-})) |>
-  bind_rows()
-
-ggplot(inst_df, aes(x = time, y = InstantRegret, color = Algorithm)) +
-  geom_line(size = 0.7, alpha = 0.85) +
-  scale_color_manual(values = c("Standard UCB" = "#D62728", 
-                                "Thompson Sampling" = "#1F77B4", 
-                                "Tuned UCB" = "#2CA02C")) +
-  labs(x = "Time Step", y = "Instantaneous Regret") +
-  theme_classic(base_size = 12) +
-  theme(legend.position = "bottom", legend.title = element_blank())
+final_regrets <- do.call(rbind, lapply(names(results), function(name) {
+  values <- sapply(results[[name]], function(r) tail(r$cumulative, 1))
+  data.frame(FinalRegret = values, Algorithm = name)
+}))
 ```
 
+Plot:
+```{r}
+ggplot(final_regrets, aes(x = FinalRegret, fill = Algorithm)) +
+  geom_histogram(alpha = 0.65, bins = 30, position = "identity", color = "white") +
+  scale_fill_manual(values = c("Standard UCB" = "#D62728", 
+                               "Thompson Sampling" = "#1F77B4", 
+                               "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Final Cumulative Regret", y = "Frequency") +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    axis.text = element_text(color = "black"),
+    panel.grid = element_blank()
+  )
+```
+
+### Summary
+
+The results show clear differences in algorithm performance. Standard UCB accumulates significantly more regret over time, indicating inefficient exploration. In contrast, Tuned UCB and Thompson Sampling perform substantially better, with Tuned UCB showing the lowest cumulative regret and highest stability across runs. This suggests that accounting for reward variance or using Bayesian sampling leads to faster and more reliable convergence in static environments.
+
+---
+
+# Alternative Metrics
 
 ## Percentage of Optimal Arm Pulls
 
@@ -172,63 +191,152 @@ ggplot(opt_df, aes(x = time, y = OptimalRate, color = Algorithm)) +
   theme(legend.position = "bottom", legend.title = element_blank())
 ```
 
-## Simple Regret
 
-Not correct yet .... 
+## Convergence Rate
+
+We need this utility function:
+```{r}
+compute_convergence_time <- function(opt_pulls, window = 50, threshold = 0.95) {
+  T <- length(opt_pulls)
+  for (t in 1:(T - window + 1)) {
+    window_avg <- mean(opt_pulls[t:(t + window - 1)])
+    if (window_avg >= threshold) {
+      return(t)
+    }
+  }
+  return(NA)
+}
+```
+
+Apply to all simulations:
+```{r}
+convergence_df <- do.call(rbind, lapply(names(results), function(name) {
+  conv_times <- sapply(results[[name]], function(r) compute_convergence_time(r$optimal_pulls))
+  data.frame(ConvergenceTime = conv_times, Algorithm = name)
+})) %>% 
+  filter(!is.na(ConvergenceTime))  # remove failed runs (never converged)
+```
+
+Plot convergence time histogram:
+```{r}
+ggplot(convergence_df, aes(x = ConvergenceTime, fill = Algorithm)) +
+  geom_histogram(alpha = 0.7, bins = 30, position = "identity", color = "white") +
+  scale_fill_manual(values = c("Standard UCB" = "#D62728",
+                               "Thompson Sampling" = "#1F77B4",
+                               "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Time to Convergence", y = "Number of Runs") +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+```
+
+Summary:
+```{r}
+convergence_df %>%
+  group_by(Algorithm) %>%
+  summarise(mean_time = mean(ConvergenceTime), sd_time = sd(ConvergenceTime), .groups = "drop")
+```
+
+
+## Simple Regret
 
 ```{r}
 simple_df <- do.call(rbind, lapply(names(results), function(name) {
-  sapply(results[[name]], function(r) r$last_simple_regret) |>
-    data.frame(SimpleRegret = _, Algorithm = name)
-})) |>
-  bind_rows()
+  regrets <- sapply(results[[name]], function(r) r$last_simple_regret)
+  data.frame(SimpleRegret = regrets, Algorithm = name)
+})) %>%
+  filter(!is.na(SimpleRegret))
 
-ggplot(simple_df, aes(x = SimpleRegret, fill = Algorithm)) +
-  geom_histogram(alpha = 0.65, bins = 30, position = "identity", color = "white") +
+ggplot(simple_df, aes(x = SimpleRegret, fill = Algorithm, color = Algorithm)) +
+  geom_density(alpha = 0.3) +
   scale_fill_manual(values = c("Standard UCB" = "#D62728", 
                                "Thompson Sampling" = "#1F77B4", 
                                "Tuned UCB" = "#2CA02C")) +
-  labs(x = "Final Simple Regret", y = "Frequency") +
+  scale_color_manual(values = c("Standard UCB" = "#D62728", 
+                                "Thompson Sampling" = "#1F77B4", 
+                                "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Final Simple Regret", y = "Density") +
   theme_classic(base_size = 12) +
   theme(legend.position = "bottom", legend.title = element_blank())
 ```
 
+---
 
+## Instantaneous Regret over Time
 
-## Histogram of Final Regret
+(Takes 30 minutes to run.)
 
-Store the result:
-```{r}
-final_regrets <- data.frame(
-  Standard_UCB = ucb_results[T, ],
-  Tuned_UCB = ucb_tuned_results[T, ],
-  Thompson_Sampling = ts_results[T, ]
-) %>%
-  pivot_longer(cols = everything(), names_to = "Algorithm", values_to = "FinalRegret")
+We need to do another simulation only for the first time steps:
+```{r simulation}
+set.seed(42)
+probs <- c(0.7, 0.6, 0.4)
+T <- 100
+runs <- 1000000
+methods <- c("ucb", "ucb-tuned", "ts")
+labels <- c("Standard UCB", "Tuned UCB", "Thompson Sampling")
 
-final_regrets$Algorithm <- factor(final_regrets$Algorithm,
-                                  levels = c("Standard_UCB", "Thompson_Sampling", "Tuned_UCB"))
+simulate_all <- function(method) {
+  replicate(runs, {
+    warmup <- sample(1:3)
+    simulate_bandit_full(method, probs, T, warmup_order = warmup)
+  }, simplify = FALSE)
+}
+
+results <- lapply(methods, simulate_all)
+names(results) <- labels
 ```
 
-Plot:
+Now we return the instantaneous regrets:
 ```{r}
-ggplot(final_regrets, aes(x = FinalRegret, fill = Algorithm)) +
-  geom_histogram(alpha = 0.65, bins = 30, position = "identity", color = "white") +
-  scale_fill_manual(values = c("Standard_UCB" = "#D62728", 
-                               "Thompson_Sampling" = "#1F77B4", 
-                               "Tuned_UCB" = "#2CA02C")) +
-  labs(x = "Final Cumulative Regret", y = "Frequency") +
+inst_df <- do.call(rbind, lapply(names(results), function(name) {
+  regrets <- sapply(results[[name]], function(r) r$instantaneous)
+  means <- rowMeans(regrets)
+  data.frame(time = 1:T, InstantRegret = means, Algorithm = name)
+}))
+
+ggplot(inst_df, aes(x = time, y = InstantRegret, color = Algorithm)) +
+  geom_line(size = 0.7, alpha = 0.85) +
+  scale_color_manual(values = c("Standard UCB" = "#D62728", 
+                                "Thompson Sampling" = "#1F77B4", 
+                                "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Time Step", y = "Instantaneous Regret") +
   theme_classic(base_size = 12) +
-  theme(
-    legend.position = "bottom",
-    legend.title = element_blank(),
-    axis.text = element_text(color = "black"),
-    panel.grid = element_blank()
-  )
+  theme(legend.position = "bottom", legend.title = element_blank())
 ```
 
+Table with the first 25 time steps:
+```{r}
+inst_wide <- inst_df %>%
+  filter(time <= 25) %>%
+  pivot_wider(
+    names_from = Algorithm,
+    values_from = InstantRegret
+  ) %>%
+  arrange(time)
 
-## Summary
+inst_wide
+```
 
-The results show clear differences in algorithm performance. Standard UCB accumulates significantly more regret over time, indicating inefficient exploration. In contrast, Tuned UCB and Thompson Sampling perform substantially better, with Tuned UCB showing the lowest cumulative regret and highest stability across runs. This suggests that accounting for reward variance or using Bayesian sampling leads to faster and more reliable convergence in static environments.
+Plot for the first 50 time steps:
+```{r}
+inst_df <- do.call(rbind, lapply(names(results), function(name) {
+  regrets <- sapply(results[[name]], function(r) r$instantaneous)
+  means <- rowMeans(regrets)
+  data.frame(time = 1:T, InstantRegret = means, Algorithm = name)
+}))
+
+inst_df_subset <- inst_df %>% filter(time <= 50)
+
+ggplot(inst_df_subset, aes(x = time, y = InstantRegret, color = Algorithm)) +
+  geom_line(size = 0.7, alpha = 0.85) +
+  scale_color_manual(values = c("Standard UCB" = "#D62728", 
+                                "Thompson Sampling" = "#1F77B4", 
+                                "Tuned UCB" = "#2CA02C")) +
+  labs(x = "Time Step", y = "Instantaneous Regret") +
+  theme_classic(base_size = 12) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
 
