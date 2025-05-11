@@ -152,7 +152,8 @@ ggplot(regret_df, aes(x = t, y = value, color = name)) +
   theme_minimal()
 ```
 
-DERIVE CONCLUSIONS 
+As latent state rarely switches, the environment is almost stationary most of the time. UCB thrives in stable settings as the optimal arm will remain the same for long periods of time and UCB is quick to figure out the better arm early on while Thompson might experience more exploration.
+
 
 # 3. Computing Average Performance
 
@@ -242,7 +243,7 @@ ggplot(regret_summary_long, aes(x = t, y = mean, color = Algorithm, fill = Algor
   theme_minimal()
 ```
 
-DERIVE CONCLUSIONS
+Compared to the previous plot, this plot is statistically more reliable than a single run. It smooths over noise and gives a reliable average performance picture with variability bands. We can clearly observe that UCB perfoms better in settings with higher stickiness.
 
 # 4. Lower Transition Stickiness
 
@@ -1411,6 +1412,7 @@ ggplot(df_stat, aes(t, CumulativeRegret, color = Method)) +
 ```
 
 ```{r}
+library(knitr)
 
 simulate_state_dependent_arms <- function(n = 500, 
                                           trans_mat = matrix(c(0.9, 0.1, 0.1, 0.9), 2, 2),
@@ -1622,6 +1624,8 @@ ggplot(df_stat, aes(t, CumulativeRegret, color = Method)) +
   theme_minimal()
 
 ```
+
+
 ```{r}
 acc_ucb <- cumsum(ucb_choice==best)/(1:n)
 acc_ts  <- cumsum(ts_choice==best)/(1:n)
@@ -1637,6 +1641,284 @@ ggplot(df_acc_long, aes(t, value, color=variable)) +
 We can see that this graph confirms our expectation of UBC performing worse than the other methods.
 
 (we could do cross validation here to test with which params the methods perform best to further discover relationships)
+
+
+# 3 Arm Case: Global Switching Model
+
+```{r}
+set.seed(123)
+n_bandit <- 500
+n_runs <- 200
+
+trans_mat <- matrix(c(0.8, 0.2,
+                      0.2, 0.8), nrow = 2, byrow = TRUE)
+
+bandit_probs <- matrix(c(0.8, 0.4, 0.6,
+                         0.3, 0.7, 0.5), nrow = 2, byrow = TRUE)
+
+reg_ucb_global <- matrix(0, nrow = n_bandit, ncol = n_runs)
+reg_ts_global <- matrix(0, nrow = n_bandit, ncol = n_runs)
+ucb_choices_global <- matrix(0, nrow = n_bandit, ncol = n_runs)
+ts_choices_global <- matrix(0, nrow = n_bandit, ncol = n_runs)
+best_arm_global <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+for (r in 1:n_runs) {
+  states <- numeric(n_bandit)
+  states[1] <- sample(1:2, 1)
+  for (t in 2:n_bandit) {
+    states[t] <- sample(1:2, 1, prob = trans_mat[states[t - 1], ])
+  }
+  
+  probs <- bandit_probs[states, ]
+  best_arm <- apply(probs, 1, which.max)
+  best_prob <- apply(probs, 1, max)
+  
+  succ_ucb <- tr_ucb <- numeric(3)
+  alpha_ts <- beta_ts <- rep(1, 3)
+  
+  cum_ucb <- cum_ts <- 0
+  regs_ucb <- regs_ts <- numeric(n_bandit)
+  
+  for (t in 1:n_bandit) {
+    # UCB
+    ucbv <- ifelse(tr_ucb == 0, 1, succ_ucb / tr_ucb + sqrt(2 * log(t) / tr_ucb))
+    a_ucb <- which.max(ucbv)
+    ucb_choices_global[t, r] <- a_ucb
+    r_ucb <- rbinom(1, 1, probs[t, a_ucb])
+    succ_ucb[a_ucb] <- succ_ucb[a_ucb] + r_ucb
+    tr_ucb[a_ucb] <- tr_ucb[a_ucb] + 1
+    cum_ucb <- cum_ucb + (best_prob[t] - probs[t, a_ucb])
+    regs_ucb[t] <- cum_ucb
+
+    # Thompson Sampling
+    ts_draws <- rbeta(3, alpha_ts, beta_ts)
+    a_ts <- which.max(ts_draws)
+    ts_choices_global[t, r] <- a_ts
+    r_ts <- rbinom(1, 1, probs[t, a_ts])
+    alpha_ts[a_ts] <- alpha_ts[a_ts] + r_ts
+    beta_ts[a_ts] <- beta_ts[a_ts] + (1 - r_ts)
+    cum_ts <- cum_ts + (best_prob[t] - probs[t, a_ts])
+    regs_ts[t] <- cum_ts
+  }
+  
+  reg_ucb_global[, r] <- regs_ucb
+  reg_ts_global[, r] <- regs_ts
+  best_arm_global[, r] <- best_arm
+}
+
+# Compute cumulative regret
+df_global <- tibble(
+  t = 1:n_bandit,
+  UCB = rowMeans(reg_ucb_global),
+  Thompson = rowMeans(reg_ts_global)
+) %>% pivot_longer(-t, names_to = "Method", values_to = "CumulativeRegret")
+
+ggplot(df_global, aes(t, CumulativeRegret, color = Method)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Regret: Global Switching Environment (3 Arms)",
+       x = "Time Step", y = "Cumulative Regret") +
+  theme_minimal()
+
+# Accuracy calculation
+compute_accuracy <- function(choices, best_arms) {
+  acc <- numeric(n_bandit)
+  for (t in 1:n_bandit) {
+    acc[t] <- mean(choices[t, ] == best_arms[t, ])
+  }
+  return(acc)
+}
+
+acc_df_global <- tibble(
+  t = 1:n_bandit,
+  UCB = compute_accuracy(ucb_choices_global, best_arm_global),
+  Thompson = compute_accuracy(ts_choices_global, best_arm_global)
+) %>% pivot_longer(-t, names_to = "Method", values_to = "Accuracy")
+
+ggplot(acc_df_global, aes(t, Accuracy, color = Method)) +
+  geom_line(size = 1) +
+  labs(title = "Accuracy: Global Switching (Best Arm Match)",
+       x = "Time Step", y = "Fraction Correct") +
+  theme_minimal()
+```
+
+# 3 Arm Local Switching Model
+
+```{r}
+set.seed(456)
+n_bandit <- 500
+n_runs <- 200
+
+# Transition matrices for each arm's local state
+trans_mat_list <- list(
+  matrix(c(0.9, 0.1,
+           0.1, 0.9), nrow = 2, byrow = TRUE),
+  matrix(c(0.85, 0.15,
+           0.15, 0.85), nrow = 2, byrow = TRUE),
+  matrix(c(0.8, 0.2,
+           0.2, 0.8), nrow = 2, byrow = TRUE)
+)
+
+# reward probabilities for each arm in each of its states
+# each row corresponds to an arm; columns are states 1 and 2
+arm_probs <- list(
+  c(0.8, 0.3),
+  c(0.4, 0.7),
+  c(0.6, 0.5)
+)
+
+reg_ucb_local <- matrix(0, nrow = n_bandit, ncol = n_runs)
+reg_ts_local <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+for (r in 1:n_runs) {
+  # Simulate local state sequences for each arm
+  states_list <- list()
+  for (a in 1:3) {
+    states <- numeric(n_bandit)
+    states[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states[t] <- sample(1:2, 1, prob = trans_mat_list[[a]][states[t - 1], ])
+    }
+    states_list[[a]] <- states
+  }
+  
+  #reward probabilities for each arm at each time step
+  probs <- matrix(0, nrow = n_bandit, ncol = 3)
+  for (a in 1:3) {
+    probs[, a] <- arm_probs[[a]][states_list[[a]]]
+  }
+  
+  #  best arm and its probability at each time step
+  best_arm <- apply(probs, 1, which.max)
+  best_prob <- apply(probs, 1, max)
+  succ_ucb <- rep(0, 3)
+  tr_ucb <- rep(0, 3)
+  alpha_ts <- rep(1, 3)
+  beta_ts <- rep(1, 3)
+  
+  # cumulative regrets
+  cum_ucb <- 0
+  cum_ts <- 0
+  regs_ucb <- numeric(n_bandit)
+  regs_ts <- numeric(n_bandit)
+  for (t in 1:n_bandit) {
+    # UCB selection
+    ucb_values <- ifelse(tr_ucb == 0, 1, succ_ucb / tr_ucb + sqrt(2 * log(t) / tr_ucb))
+    a_ucb <- which.max(ucb_values)
+    r_ucb <- rbinom(1, 1, prob = probs[t, a_ucb])
+    succ_ucb[a_ucb] <- succ_ucb[a_ucb] + r_ucb
+    tr_ucb[a_ucb] <- tr_ucb[a_ucb] + 1
+    cum_ucb <- cum_ucb + (best_prob[t] - probs[t, a_ucb])
+    regs_ucb[t] <- cum_ucb
+    
+    # Thompson Sampling selection
+    ts_draws <- rbeta(3, alpha_ts, beta_ts)
+    a_ts <- which.max(ts_draws)
+    r_ts <- rbinom(1, 1, prob = probs[t, a_ts])
+    alpha_ts[a_ts] <- alpha_ts[a_ts] + r_ts
+    beta_ts[a_ts] <- beta_ts[a_ts] + (1 - r_ts)
+    cum_ts <- cum_ts + (best_prob[t] - probs[t, a_ts])
+    regs_ts[t] <- cum_ts
+  }
+  
+  reg_ucb_local[, r] <- regs_ucb
+  reg_ts_local[, r] <- regs_ts
+}
+```
+
+```{r}
+ # average cumulative regrets
+df_local <- tibble(
+  t = 1:n_bandit,
+  UCB = rowMeans(reg_ucb_local),
+  Thompson = rowMeans(reg_ts_local)
+) %>% pivot_longer(-t, names_to = "Method", values_to = "CumulativeRegret")
+
+ggplot(df_local, aes(t, CumulativeRegret, color = Method)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Cumulative Regret: Local Switching Environment (3 Arms)",
+    x = "Time Step", y = "Cumulative Regret"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+
+ucb_choices_local <- matrix(0, nrow = n_bandit, ncol = n_runs)
+ts_choices_local  <- matrix(0, nrow = n_bandit, ncol = n_runs)
+best_arm_local    <- matrix(0, nrow = n_bandit, ncol = n_runs)
+
+# RE-RUN the whole loop, but now also storing choices and best arm
+for (r in 1:n_runs) {
+  states_list <- list()
+  for (a in 1:3) {
+    states <- numeric(n_bandit)
+    states[1] <- sample(1:2, 1)
+    for (t in 2:n_bandit) {
+      states[t] <- sample(1:2, 1, prob = trans_mat_list[[a]][states[t - 1], ])
+    }
+    states_list[[a]] <- states
+  }
+
+  probs <- matrix(0, nrow = n_bandit, ncol = 3)
+  for (a in 1:3) {
+    probs[, a] <- arm_probs[[a]][states_list[[a]]]
+  }
+
+  best_arm <- apply(probs, 1, which.max)
+  best_prob <- apply(probs, 1, max)
+
+  succ_ucb <- rep(0, 3)
+  tr_ucb <- rep(0, 3)
+  alpha_ts <- beta_ts <- rep(1, 3)
+
+  for (t in 1:n_bandit) {
+    ucb_values <- ifelse(tr_ucb == 0, 1, succ_ucb / tr_ucb + sqrt(2 * log(t) / tr_ucb))
+    a_ucb <- which.max(ucb_values)
+    ucb_choices_local[t, r] <- a_ucb
+    r_ucb <- rbinom(1, 1, prob = probs[t, a_ucb])
+    succ_ucb[a_ucb] <- succ_ucb[a_ucb] + r_ucb
+    tr_ucb[a_ucb] <- tr_ucb[a_ucb] + 1
+
+    ts_draws <- rbeta(3, alpha_ts, beta_ts)
+    a_ts <- which.max(ts_draws)
+    ts_choices_local[t, r] <- a_ts
+    r_ts <- rbinom(1, 1, prob = probs[t, a_ts])
+    alpha_ts[a_ts] <- alpha_ts[a_ts] + r_ts
+    beta_ts[a_ts] <- beta_ts[a_ts] + (1 - r_ts)
+
+    best_arm_local[t, r] <- best_arm[t]
+  }
+}
+
+# Compute accuracy over time
+compute_accuracy <- function(choices, best_arms) {
+  acc <- numeric(n_bandit)
+  for (t in 1:n_bandit) {
+    acc[t] <- mean(choices[t, ] == best_arms[t, ])
+  }
+  return(acc)
+}
+
+# Build accuracy dataframe
+acc_df_local <- tibble(
+  t = 1:n_bandit,
+  UCB = compute_accuracy(ucb_choices_local, best_arm_local),
+  Thompson = compute_accuracy(ts_choices_local, best_arm_local)
+) %>%
+  pivot_longer(-t, names_to = "Method", values_to = "Accuracy")
+
+# Plot
+ggplot(acc_df_local, aes(t, Accuracy, color = Method)) +
+  geom_line(size = 1) +
+  labs(title = "Accuracy: Local Switching (Best Arm Match)",
+       x = "Time Step", y = "Fraction Correct") +
+  theme_minimal()
+
+```
+
+
+
 
 
 

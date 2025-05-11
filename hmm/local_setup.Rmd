@@ -7,7 +7,7 @@ output: html_document
 
 If you don't have it installed yet, **you first need to download and install JAGS to your local system**, then run this:
 ```{r}
-install.packages("rjags")
+#install.packages("rjags")
 ```
 
 
@@ -271,6 +271,8 @@ UCB1 assigns each arm an “upper confidence bound” on its expected reward, an
 $$\text{UCB}_i(t) = \hat\mu_i \;+\; \sqrt{\frac{2\ln t}{n_i}}$$. So intuitively, the $$\sqrt{2\ln t/n_i}$$ term is large when **n_i** is small (forcing exploration), and decays as **n_i** grows.As t increases, the **ln_t** term nudges you to revisit arms occasionally to maintain confidence.
 
 
+## Classical Frequentist UCB
+
 ```{r}
 set.seed(456)
 # here we are setting the parameters: 
@@ -326,7 +328,6 @@ oracle_arm <- apply(theta_selected, 2, which.max)
 
 ```
 
-Now we move on to initalizing the algorithm for this after having set the model.
 
 ```{r}
 # Initializing algorithm structure 
@@ -383,6 +384,7 @@ plot(cumu_regret_ucb, type="l", lwd=2, col="red",
 ```
 UCB’s growing reward line is basically straight bcs it quickly finds good arms and the roughly linear regret (≈80 by 500 pulls) simply reflects that in a changing (hidden‐Markov) environment you can never stop exploring.
 
+## Bayesian UCB
 
 ```{r}
 library(rjags)
