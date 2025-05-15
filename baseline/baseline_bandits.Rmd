@@ -23,9 +23,9 @@ for (pkg in packages) {
 
 We consider a stationary stochastic multi-armed bandit problem with $K = 3$ arms. Each arm returns a reward drawn from a Bernoulli distribution with success probabilities:
 
-- Arm 1: $p_1 = 0.70$
-- Arm 2: $p_2 = 0.60$
-- Arm 3: $p_3 = 0.40$
+- Arm 1: $\mu^1 = 0.70$
+- Arm 2: $\mu^2 = 0.60$
+- Arm 3: $\mu^3 = 0.40$
 
 The environment is stationary, i.e., the reward distributions do not change over time. We run each algorithm for $T = 1000$ time steps and repeat the simulation for 1000 independent runs to compute average performance metrics.
 
@@ -243,24 +243,17 @@ convergence_df %>%
 ## Simple Regret
 
 ```{r}
-simple_df <- do.call(rbind, lapply(names(results), function(name) {
-  regrets <- sapply(results[[name]], function(r) r$last_simple_regret)
-  data.frame(SimpleRegret = regrets, Algorithm = name)
-})) %>%
-  filter(!is.na(SimpleRegret))
+simple_summary <- simple_df %>%
+  group_by(Algorithm) %>%
+  summarise(
+    mean_simple_regret = mean(SimpleRegret),
+    sd_simple_regret = sd(SimpleRegret),
+    .groups = "drop"
+  )
 
-ggplot(simple_df, aes(x = SimpleRegret, fill = Algorithm, color = Algorithm)) +
-  geom_density(alpha = 0.3) +
-  scale_fill_manual(values = c("Standard UCB" = "#D62728", 
-                               "Thompson Sampling" = "#1F77B4", 
-                               "Tuned UCB" = "#2CA02C")) +
-  scale_color_manual(values = c("Standard UCB" = "#D62728", 
-                                "Thompson Sampling" = "#1F77B4", 
-                                "Tuned UCB" = "#2CA02C")) +
-  labs(x = "Final Simple Regret", y = "Density") +
-  theme_classic(base_size = 12) +
-  theme(legend.position = "bottom", legend.title = element_blank())
+simple_summary
 ```
+
 
 ---
 
