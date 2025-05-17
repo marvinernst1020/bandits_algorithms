@@ -1,0 +1,104 @@
+# ADVANCED UCB
+
+ucb_advanced <- function(K, N, mu, y_true, z_true, batch_size, 
+                         burn = 1000, n_iter = 100, 
+                         dynamics = c("common", "independent"),
+                         model_path = NULL) {
+  
+  dynamics <- match.arg(dynamics)
+  
+  if (is.null(model_path)) {
+    if (!exists("advanced_model_path")) {
+      stop("Model path not provided and advanced_model_path is not defined.")
+    }
+    model_path <- advanced_model_path
+  }
+  
+  observed_rewards <- list()
+  selected_arms <- numeric(N)
+  received_rewards <- numeric(N)
+  regret <- numeric(N)
+  post_matrix <- NULL
+  
+  # Oracle computation
+  mu_selected <- matrix(0, nrow = K, ncol = N)
+  if (dynamics == "common") {
+    for (i in 1:K) {
+      for (t in 1:N) {
+        mu_selected[i, t] <- mu[i, z_true[t] + 1]
+      }
+    }
+  } else {  # independent
+    for (i in 1:K) {
+      for (t in 1:N) {
+        mu_selected[i, t] <- mu[i, z_true[i, t] + 1]
+      }
+    }
+  }
+  oracle_arm <- apply(mu_selected, 2, which.max)
+  
+  # Initialization 
+  selected_arms[1] <- sample(1:K, 1)
+  observed_data <- matrix(NA, nrow = K, ncol = N)
+  observed_data[selected_arms[1], 1] <- y_true[selected_arms[1], 1]
+  received_rewards[1] <- y_true[selected_arms[1], 1]
+  
+  regret[1] <- mu_selected[oracle_arm[1], 1] - 
+    if (dynamics == "common") mu[selected_arms[1], z_true[1] + 1] else mu[selected_arms[1], z_true[selected_arms[1], 1] + 1]
+  
+  # Sequential loop 
+  for (t in 2:N) {
+    sampled_values <- numeric(K)
+    
+    if (sum(!is.na(observed_data)) >= K * 2 && t %% batch_size == 0) {
+      data_list <- list(
+        y_obs = observed_data[, 1:(t-1)],
+        K = K,
+        N = t - 1
+      )
+      model <- jags.model(model_path, data = data_list, n.chains = 1, quiet = TRUE)
+      update(model, burn)
+      post <- coda.samples(model, c("mu", "pi", paste0("z[", t - 1, "]")), n.iter = n_iter)
+      post_matrix <- as.matrix(post)
+      message(glue::glue("[{Sys.time()}] Performed inference at time step {t}"))
+    }
+    
+    if (is.matrix(post_matrix)) {
+      pi0 <- post_matrix[, "pi[1]"]
+      pi1 <- post_matrix[, "pi[2]"]
+      if (t %% batch_size == 0) {
+        z_last <- post_matrix[, paste0("z[", t-1, "]")]
+      }
+      sampled_pi <- ifelse(z_last == 0, pi0, pi1)
+      z_t <- rbinom(length(sampled_pi), size = 1, prob = sampled_pi)
+      z_last <- z_t
+    }
+    
+    # UCB arm selection
+    for (i in 1:K) {
+      if (is.matrix(post_matrix)) {
+        mu0 <- post_matrix[, paste0("mu[", i, ",1]")]
+        mu1 <- post_matrix[, paste0("mu[", i, ",2]")]
+        sampled_mu <- ifelse(z_t == 0, mu0, mu1)
+        sampled_values[i] <- mean(sampled_mu) + sd(sampled_mu) / sqrt(length(sampled_mu)) * log(t)
+      } else {
+        sampled_values[i] <- runif(1)
+      }
+    }
+    
+    # Observe reward and update 
+    selected_arms[t] <- which.max(sampled_values)
+    r_t <- y_true[selected_arms[t], t]
+    received_rewards[t] <- r_t
+    observed_data[selected_arms[t], t] <- r_t
+    
+    true_z <- if (dynamics == "common") z_true[t] else z_true[selected_arms[t], t]
+    regret[t] <- mu_selected[oracle_arm[t], t] - mu[selected_arms[t], true_z + 1]
+  }
+  
+  return(list(
+    cumulative_reward = cumsum(received_rewards),
+    cumulative_regret = cumsum(regret),
+    posterior_matrix = post_matrix
+  ))
+}

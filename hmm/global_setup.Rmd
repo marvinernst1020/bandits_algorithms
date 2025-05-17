@@ -212,7 +212,6 @@ for (arm in 1:K){
   cat("\nEstimated Reward probabilities for arm ", arm,":\n")
   print(estimated_theta)
 }
-  
 ```
 
 # Run in Expectation
@@ -269,7 +268,6 @@ plot(expected_regrets_thompson_poor, type = "l", col = "red", lwd = 2,
 
 
 # 3. Poor Model - UCB
-
 
 ```{r}
 #recover same simulation we ran before
@@ -463,6 +461,7 @@ z_true <- z_global
 K <- 3
 N <- 100
 ```
+
 ## 4.2 Sequential Thompson Sampling Loop with Reward-Only Observations
 
 ```{r}

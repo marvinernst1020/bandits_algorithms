@@ -343,39 +343,6 @@ dummy_data <- list(y = c(0,1), N = 2)  # minimal dummy data just to initialize
 base_models <- lapply(1:K, function(k) jags.model(model_file, data = dummy_data, n.chains = 1, quiet = TRUE))
 ```
 
-#### CHANGE
-
-Storing a model in a string:
-```{r}
-model_string <- "
-model {
-  y[1] ~ dbern(p[1])
-  z[1] ~ dbern(0.5)
-  p[1] <- z[1]*theta1 + (1 - z[1])*theta0
-
-  for (t in 2:N) {
-    z[t] ~ dbern(z[t-1]*pi[2] + (1 - z[t-1])*pi[1])
-    p[t] <- z[t]*theta1 + (1 - z[t])*theta0
-    y[t] ~ dbern(p[t])
-  }
-
-  theta0 ~ dbeta(1,1)
-  theta1 ~ dbeta(1,1)
-  pi[1] ~ dbeta(1,1)
-  pi[2] ~ dbeta(1,1)
-}
-"
-```
-
-Compiling the base models using a string:
-```{r}
-dummy_data <- list(y = c(0,1), N = 2)
-
-base_models <- lapply(1:K, function(k) {
-  jags.model(textConnection(model_string), data = dummy_data, n.chains = 1, quiet = TRUE)
-})
-```
-
 
 ```{r thompson-sampling-loop-z-aware}
 thompson_poor <- function(K,N,theta,y_true,z_true,Batch_size){
@@ -386,13 +353,6 @@ thompson_poor <- function(K,N,theta,y_true,z_true,Batch_size){
   regret <- numeric(N)
 
   # Oracle computation of best arm probability based
-  #theta_selected <- matrix(0, nrow = K, ncol = N)
-  #for (i in 1:K) {
-    #for (t in 1:N) {
-      #theta_selected[i, t] <- theta[i, z_true[i,t] + 1]
-    #}
-  #}
-  # CHANGE 1
   theta_selected <- matrix(NA, nrow = K, ncol = N)
   for (k in 1:K) {
     for (t in 1:N) {
@@ -411,7 +371,7 @@ thompson_poor <- function(K,N,theta,y_true,z_true,Batch_size){
   for (t in 1:N) {
     sampled_values <- numeric(K)
   
-    if (length(observed_rewards[[a_t]]) >= 2 && t%%Batch_size == 0) { # we only do inference is the arm has been pulled on last iteration
+    if (length(observed_rewards[[a_t]]) >= 2 && t%%Batch_size == 0) { # we only do inference if the arm has been pulled on last iteration
     
       # JAGS inference
       data_list <- list(y = observed_rewards[[a_t]], N = length(observed_rewards[[a_t]]))
@@ -424,7 +384,7 @@ thompson_poor <- function(K,N,theta,y_true,z_true,Batch_size){
     
       #Store the posteriors in the posteriors matrix
       # CAHNGE 4
-      post <- coda.samples(model, c("theta0", "theta1", "pi",paste0("z[", length(observed_rewards[[a_t]]), "]")), n.iter = 25) # was before 100
+      post <- coda.samples(model, c("theta0", "theta1", "pi",paste0("z[", length(observed_rewards[[a_t]]), "]")), n.iter = 100) # was before 100
       post_matrix <- as.matrix(post)
       posterior_matrices[[a_t]] <- post_matrix
     
