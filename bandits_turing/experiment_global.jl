@@ -16,12 +16,32 @@ Random.seed!(42)
 # ==================== MODEL DEFINITIONS ====================
 
 # Advanced Model: Global HMM State Across Arms
-@model function hmm_bandit_a(y)
+@model function hmm_bandit_a1(y)
     N = length(y)
     mu0 ~ Beta(1, 1)
     mu1 ~ Beta(1, 1)
     pi0 ~ Beta(1, 1)
     pi1 ~ Beta(1, 1)
+
+    z = Vector{Int}(undef, N)
+    z[1] ~ Bernoulli(0.5)
+    for t in 2:N
+        z[t] ~ Bernoulli(z[t-1] == 1 ? pi1 : pi0)
+    end
+
+    for t in 1:N
+        y[t] ~ Bernoulli(z[t] == 1 ? mu1 : mu0)
+    end
+end
+
+@model function hmm_bandit_a2(y)
+    N = length(y)
+
+    # Prior from previous posterior estimates could be something like this:
+    mu0 ~ Beta(3.5, 1.5)  # Previously: mean about 0.7
+    mu1 ~ Beta(1.5, 3.5)  # Previously: mean about 0.3
+    pi0 ~ Beta(8, 2)  # Tendency to stay in state 0
+    pi1 ~ Beta(8, 2)  # Tendency to stay in state 1
 
     z = Vector{Int}(undef, N)
     z[1] ~ Bernoulli(0.5)
@@ -56,10 +76,12 @@ function run_adv_ts_experiment(K, N, mu, pi_mat)
     for t in 1:N
         sampled_thetas = zeros(K)
         for k in 1:K
-            if length(observed[k]) >= 5 && t % 5 == 0
-                model = hmm_bandit_a(observed[k])
-                chain = sample(model, MH(), 550; progress=false)
-                burned_chain = chain[501:end, :, :]
+            if length(observed[k]) % 20 == 0 && length(observed[k]) >= 20
+            #if length(observed[k]) >= 5 && t % 5 == 0 # Update model every 5 rounds
+            #if length(observed[k]) >= 2
+                model = hmm_bandit_a2(observed[k])
+                chain = sample(model, MH(), 1200; progress=false)
+                burned_chain = chain[1001:end, :, :]
                 mu0_post = mean(burned_chain[:mu0])
                 mu1_post = mean(burned_chain[:mu1])
                 z_pred = rand(Bernoulli(0.5))
@@ -118,9 +140,11 @@ end
 
 # ==================== RUN & PLOT ====================
 
-num_runs = 10
-K, N = 3, 1000
-mu = [0.1 0.9; 0.45 0.6; 0.9 0.1]
+num_runs = 1
+#K, N = 3, 1000
+#mu = [0.1 0.95; 0.3 0.75; 0.95 0.1]
+K, N = 2, 5000
+mu = [0.05 0.95; 0.95 0.05]
 pi_mat = [0.9 0.1; 0.1 0.9]
 
 reward_adv = zeros(Float64, num_runs, N)
