@@ -66,6 +66,7 @@ thompson_poor <- function(K, N, mu, y_true, z_true, batch_size,
           z_last[[k]] <- posterior_results[[k]]$z
         }
       }
+      cat(glue::glue("Completed inference at batch t = {t} (batch {t / batch_size})\n"))
     }
     
     # Arm selection via Thompson Sampling

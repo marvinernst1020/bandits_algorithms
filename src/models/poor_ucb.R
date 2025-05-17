@@ -68,6 +68,7 @@ ucb_poor <- function(K, N, mu, y_true, z_true, batch_size,
           z_last[[l]] <- updated_posteriors[[l]]$z_last
         }
       }
+      cat(glue::glue("Completed inference at batch t = {t} (batch {t / batch_size})\n"))
     }
     
     # Arm selection via UCB logic

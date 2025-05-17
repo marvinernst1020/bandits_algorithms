@@ -60,6 +60,7 @@ ucb_advanced <- function(K, N, mu, y_true, z_true, batch_size,
       update(model, burn)
       post <- coda.samples(model, c("mu", "pi", paste0("z[", t - 1, "]")), n.iter = n_iter)
       post_matrix <- as.matrix(post)
+      message(glue::glue("[{Sys.time()}] Performed inference at time step {t}"))
     }
     
     if (is.matrix(post_matrix)) {

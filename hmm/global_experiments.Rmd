@@ -5,12 +5,17 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
+```{r}
+install.packages("glue")
+```
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(rjags)
 library(coda)
 library(tidyverse)
 library(here)
+library(glue)
 library(future.apply)
 plan(multisession)
 ```
@@ -46,8 +51,8 @@ N <- 5000
 
 Transition Probability:
 ```{r}
-pi_global <- matrix(c(0.999, 0.001,
-                     0.001, 0.999),
+pi_global <- matrix(c(0.9, 0.1,
+                     0.1, 0.9),
                      nrow = 2, byrow = TRUE)  
 ```
 
@@ -275,6 +280,7 @@ ts_runs_df <- future_lapply(1:25, function(i) {
       complexity = "advanced",
       dynamics = "common",
       data_path = "data_global/A",
+      
       setting = "global"
     )
   )

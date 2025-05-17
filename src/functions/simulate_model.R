@@ -24,6 +24,8 @@ simulate_model_on_run <- function(run_id, N, K,
   dynamics <- match.arg(dynamics)
   setting <- match.arg(setting)
   
+  message(glue::glue("[{Sys.time()}] Starting run {run_id}: {toupper(setting)} / {algorithm} / {complexity} / {dynamics}"))
+  
   # Automatically set file prefix based on setting
   file_prefix <- if (setting == "global") "global_truth_" else "local_truth_"
   file_path <- file.path(data_path, paste0(file_prefix, run_id, ".rds"))
