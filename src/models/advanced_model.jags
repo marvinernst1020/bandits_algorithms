@@ -1,7 +1,7 @@
 model {
   for (i in 1:K) {
     for (t in 1:N) {
-      p_arm[i,t] <- z[t] * theta[i,2] + (1 - z[t]) * theta[i,1]
+      p_arm[i,t] <- z[t] * mu[i,2] + (1 - z[t]) * mu[i,1]
     }
   }
 
@@ -22,7 +22,7 @@ model {
 
   for (i in 1:K) {
     for (s in 1:2) {
-      theta[i,s] ~ dbeta(1,1)
+      mu[i,s] ~ dbeta(1,1)
     }
   }
 }

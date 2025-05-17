@@ -1,0 +1,272 @@
+---
+title: "Local State Bandit Simulation"
+author: "Marvin Ernst, Oriol Gelabert, Melisa Vadenja"
+date: "`r Sys.Date()`"
+output: html\_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rjags)
+library(coda)
+library(tidyverse)
+library(here)
+library(future.apply)
+plan(multisession)
+```
+
+# Problem Setup: Local Latent State
+
+We simulate a \$K\$-armed bandit problem where **each arm has its own independent latent state process**, governed by separate Hidden Markov Models (HMMs). This setup reflects settings where arms evolve independently in time.
+
+### Loading all the Models and Functions
+
+```{r}
+source(here("src/load_all.R"))
+```
+
+Setting a seed:
+```{r}
+set.seed(123)
+```
+
+---
+
+# LOCAL SETTING
+
+Number of arms:
+
+```{r}
+K <- 3
+```
+
+Number of time steps:
+
+```{r}
+N <- 1000
+```
+
+Transition Probabilities (one per arm):
+
+```{r}
+pi_indiv <- list(
+  matrix(c(0.9, 0.1, 0.1, 0.9), 2, 2, byrow = TRUE),
+  matrix(c(0.85, 0.15, 0.2, 0.8), 2, 2, byrow = TRUE),
+  matrix(c(0.95, 0.05, 0.3, 0.7), 2, 2, byrow = TRUE)
+)
+```
+
+Reward Probabilities:
+
+```{r}
+mu <- matrix(c(0.1, 0.9,
+                  0.5, 0.7,
+                  0.9, 0.1),
+                nrow = K, byrow = TRUE)
+```
+
+---
+
+# 1. Generating Ground Truth Data for Local States
+
+Generate and save a single local dataset:
+
+```{r}
+generate_local_datasets(K = K, N = N, mu = mu, pi_indiv = pi_indiv, n_runs = 1, scenario_name = "single_run", root_path = "data_local")
+```
+
+Load the generated data:
+```{r}
+truth <- readRDS("data_local/single_run/local_truth_1.rds")
+y_local <- truth$y
+z_local <- truth$z
+```
+
+## 1.1 Visualize Latent States
+
+```{r visualize-local-states}
+z_df <- as.data.frame(z_local)
+z_df <- z_df |> mutate(arm = factor(1:K)) |>
+  pivot_longer(cols = starts_with("V"), names_to = "time", values_to = "state") |>
+  mutate(time = as.numeric(gsub("V", "", time)))
+
+ggplot(z_df, aes(x = time, y = state, color = arm)) +
+  geom_line() +
+  facet_wrap(~ arm, ncol = 1) +
+  labs(title = "Latent Local States Over Time",
+       x = "Time", y = "State")
+```
+
+## 1.2 Visualize Rewards
+```{r visualize-local-rewards}
+y_df <- as.data.frame(y_local)
+y_df <- y_df |> mutate(arm = factor(1:K)) |>
+  pivot_longer(cols = starts_with("V"), names_to = "time", values_to = "reward") |>
+  mutate(time = as.numeric(gsub("V", "", time)))
+
+ggplot(y_df, aes(x = time, y = reward, color = arm)) +
+  geom_line() +
+  facet_wrap(~ arm, ncol = 1) +
+  labs(title = "Reward Streams Per Arm",
+       x = "Time", y = "Reward")
+```
+
+---
+
+# 2. Single Run - Model Comparison
+
+## 2.1 Thompson Sampling
+
+### Baseline
+
+```{r}
+baseline_ts_results <- bandit_baselines("ts", K, N, y_local, z_local, mu, dynamics = "independent", batch_size = 100)
+```
+
+Store in df:
+```{r}
+baseline_ts_df <- data.frame(
+  time = seq_along(baseline_ts_results$cumulative_reward),
+  cumulative_reward = baseline_ts_results$cumulative_reward,
+  cumulative_regret = baseline_ts_results$cumulative_regret,
+  model = "Baseline TS"
+)
+```
+
+### Poor
+
+```{r}
+res_poor_ts <- thompson_poor(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+```
+
+Store in df:
+```{r}
+poor_ts_df <- data.frame(
+  time = seq_along(res_poor_ts$cumulative_reward),
+  cumulative_reward = res_poor_ts$cumulative_reward,
+  cumulative_regret = res_poor_ts$cumulative_regret,
+  model = "poor TS"
+)
+```
+
+Combining results into one df:
+```{r}
+ts_compare_df <- bind_rows(baseline_ts_df, poor_ts_df)
+```
+
+### Cumulative Reward:
+```{r}
+ggplot(ts_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Reward: Baseline vs poor TS",
+       x = "Time", y = "Cumulative Reward") +
+  theme_minimal()
+```
+
+### Plot Regret:
+```{r}
+ggplot(ts_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Regret: Baseline vs poor TS",
+       x = "Time", y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+## 2.2 UCB
+
+### Baseline
+
+```{r}
+baseline_ucb_results <- bandit_baselines("ucb-tuned", K, N, y_local, z_local, mu,
+                                         dynamics = "independent", batch_size = 100)
+```
+
+Store in df:
+```{r}
+baseline_ucb_df <- data.frame(
+  time = seq_along(baseline_ucb_results$cumulative_reward),
+  cumulative_reward = baseline_ucb_results$cumulative_reward,
+  cumulative_regret = baseline_ucb_results$cumulative_regret,
+  model = "Baseline UCB"
+)
+```
+
+### poor
+```{r}
+res_poor_ucb <- ucb_poor(K, N, mu, y_local, z_local, batch_size = 100,
+                            burn = 500, n_iter = 100, dynamics = "independent")
+```
+
+Store in df:
+```{r}
+poor_ucb_df <- data.frame(
+  time = seq_along(res_poor_ucb$cumulative_reward),
+  cumulative_reward = res_poor_ucb$cumulative_reward,
+  cumulative_regret = res_poor_ucb$cumulative_regret,
+  model = "poor UCB"
+)
+```
+
+Combining results into one df:
+```{r}
+ucb_compare_df <- bind_rows(baseline_ucb_df, poor_ucb_df)
+```
+
+### Cumulative Reward:
+```{r}
+ggplot(ucb_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Reward: Baseline vs poor UCB",
+       x = "Time", y = "Cumulative Reward") +
+  theme_minimal()
+```
+
+### Cumulative Regret:
+```{r}
+ggplot(ucb_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Regret: Baseline vs poor UCB",
+       x = "Time", y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+
+
+# 3. Multiple Run - Averaged Performance 
+
+## 3.1 Generate Datasets
+```{r}
+generate_local_datasets(K = K, N = N, mu = mu, pi_indiv = pi_indiv, n_runs = 25, root_path = "data_local")
+```
+
+## 3.2 Parallel Runs
+```{r}
+model_paths <- list(
+  poor_ts = "src/models/poor_model.jags"
+)
+
+ts_multi_df <- future_lapply(1:25, function(i) {
+  simulate_model_on_run(
+    run_id = i, N = N, K = K,
+    algorithm = "ts", complexity = "poor",
+    dynamics = "independent",
+    data_path = "data_local/default_scenario",  # adapt accordingly
+    model_paths = model_paths
+  )
+}) |> bind_rows()
+```
+
+## 3.3 Summary Plot
+```{r}
+ts_summary <- ts_multi_df |> group_by(time, model) |> summarise(
+  avg_regret = mean(cumulative_regret),
+  avg_reward = mean(cumulative_reward),
+  .groups = "drop"
+)
+
+ggplot(ts_summary, aes(x = time, y = avg_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
+       x = "Time", y = "Cumulative Regret") +
+  theme_minimal()
+```

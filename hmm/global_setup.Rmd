@@ -461,6 +461,7 @@ z_true <- z_global
 K <- 3
 N <- 100
 ```
+
 ## 4.2 Sequential Thompson Sampling Loop with Reward-Only Observations
 
 ```{r}
