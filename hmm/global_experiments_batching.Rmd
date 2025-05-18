@@ -254,7 +254,7 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
 
 # 3. Multiple Run - Average Model Comparison
 
-## 3.1 Generate 25 datasets (only if not already generated)!
+## 3.1 Generate 50 datasets (only if not already generated)!
 
 ```{r}
 generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = 50)
@@ -264,7 +264,7 @@ generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenar
 
 Run simulations in parallel:
 ```{r}
-ts_runs_df <- future_lapply(1:10, function(i) {
+ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
       run_id = i, N = 5000, K = 2,
@@ -275,7 +275,7 @@ ts_runs_df <- future_lapply(1:10, function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      run_id = i, N = 5000, K = 2,
       algorithm = "ts",
       complexity = "advanced_batching",
       dynamics = "common",
@@ -285,6 +285,7 @@ ts_runs_df <- future_lapply(1:10, function(i) {
   )
 }, future.seed = TRUE) |> bind_rows()
 ```
+
 Combine:
 ```{r}
 ts_summary <- ts_runs_df |>
@@ -306,10 +307,10 @@ plot_cumulative_regret(ts_summary)
 
 Run simulations in parallel:
 ```{r}
-ucb_runs_df <- future_lapply(1:10, function(i) {
+ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      run_id = i, N = 5000, K = 2,
       algorithm = "ucb",
       complexity = "baseline",
       dynamics = "common",
@@ -317,7 +318,7 @@ ucb_runs_df <- future_lapply(1:10, function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      run_id = i, N = 5000, K = 2,
       algorithm = "ucb",
       complexity = "poor",
       dynamics = "common",
@@ -325,7 +326,7 @@ ucb_runs_df <- future_lapply(1:10, function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      run_id = i, N = 5000, K = 2,
       algorithm = "ucb",
       complexity = "advanced",
       dynamics = "common",
@@ -335,6 +336,7 @@ ucb_runs_df <- future_lapply(1:10, function(i) {
   )
 }, future.seed = TRUE) |> bind_rows()
 ```
+
 Combine:
 ```{r}
 ucb_summary <- ucb_runs_df |>

@@ -37,24 +37,25 @@ set.seed(123)
 
 Number of arms:
 ```{r}
-K <- 2 
+K <- 3
 ```
 
 Number of time steps:
 ```{r}
-N <- 50000
+N <- 5000
 ```
 
 Transition Probability:
 ```{r}
-pi_global <- matrix(c(0.95, 0.05,
-                     0.05, 0.95),
+pi_global <- matrix(c(0.99, 0.01,
+                     0.01, 0.99),
                      nrow = 2, byrow = TRUE)  
 ```
 
 Probability of Reward:
 ```{r}
 mu <- matrix(c(0.1, 0.95,
+               0.45, 0.7,
                0.95, 0.1),
                 nrow = K, byrow = TRUE)
 ```
@@ -142,11 +143,11 @@ system.time({
     y_true = y_global,
     z_true = z_global,
     mu = mu,
-    batch_size = 20,
+    batch_size = 10,
     burn = 2000,
     n_iter = 1000,
     dynamics = "common",
-    window_size = 5000
+    window_size = 1000
   )
 })
 ```
