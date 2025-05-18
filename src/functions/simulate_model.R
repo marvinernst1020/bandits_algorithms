@@ -38,6 +38,11 @@ simulate_model_on_run <- function(run_id, N, K,
                                batch_size = 100, burn = 500, n_iter = 100,
                                dynamics = dynamics)
       model <- "M2 TS"
+    } else if (complexity == "advanced_batching") {
+      res <- thompson_advanced_real_batching(K, N, data$mu, data$y, data$z,
+                           batch_size = 100, burn = 500, n_iter = 100,
+                           dynamics = dynamics)
+      model <- "M1 TS"
     } else if (complexity == "poor") {
       res <- thompson_poor(K, N, data$mu, data$y, data$z,
                            batch_size = 100, burn = 500, n_iter = 100,
