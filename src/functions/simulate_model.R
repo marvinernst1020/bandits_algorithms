@@ -37,38 +37,39 @@ simulate_model_on_run <- function(run_id, N, K,
       res <- thompson_advanced(K, N, data$mu, data$y, data$z,
                                batch_size = 100, burn = 500, n_iter = 100,
                                dynamics = dynamics)
-      model <- "Advanced TS"
+      model <- "M2 TS"
     } else if (complexity == "poor") {
       res <- thompson_poor(K, N, data$mu, data$y, data$z,
                            batch_size = 100, burn = 500, n_iter = 100,
                            dynamics = dynamics)
-      model <- "Poor TS"
+      model <- "M1 TS"
     } else if (complexity == "baseline") {
       res <- bandit_baselines("ts", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 100)
-      model <- "Baseline TS"
+      model <- "M0 TS"
     }
   } else if (algorithm == "ucb") {
     if (complexity == "advanced") {
       res <- ucb_advanced(K, N, data$mu, data$y, data$z,
                           batch_size = 100, burn = 500, n_iter = 100,
                           dynamics = dynamics)
-      model <- "Advanced UCB"
+      model <- "M2 UCB"
     } else if (complexity == "poor") {
       res <- ucb_poor(K, N, data$mu, data$y, data$z,
                       batch_size = 100, burn = 500, n_iter = 100,
                       dynamics = dynamics)
-      model <- "Poor UCB"
+      model <- "M1 UCB"
     } else if (complexity == "baseline") {
       res <- bandit_baselines("ucb-tuned", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 100)
-      model <- "Baseline UCB"
+      model <- "M0 UCB"
     }
   } else {
     stop("Unsupported algorithm")
   }
   
-  model_id <- paste(model, dynamics)
+  #model_id <- paste(model, dynamics)
+  model_id <- model
   
   tibble(
     time = 1:N,

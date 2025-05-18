@@ -13,6 +13,8 @@ library(tidyverse)
 library(here)
 library(glue)
 library(future.apply)
+library(stats)
+library(nimble)
 plan(multisession)
 ```
 
@@ -120,7 +122,7 @@ ggplot(y_df, aes(x = time, y = reward, color = arm)) +
 baseline_ts_results <- bandit_baselines("ts", 
                                         K, N, y_global, z_global, mu, 
                                         dynamics = "common",
-                                        batch_size = 100)
+                                        batch_size = 1)
 ```
 
 Store in df:
@@ -138,10 +140,12 @@ baseline_ts_results_df <- data.frame(
 system.time({
 res_adv_ts_common <- thompson_advanced(K, N, mu, y_global, z_global, 
                                        batch_size = 100, 
-                                       burn = 500, n_iter = 100,
+                                       burn = 1000, n_iter = 200,
                                        dynamics = "common")
+                                      # window_size = 3100)
 })
 ```
+
 Store in df:
 ```{r}
 adv_ts_results_df <- data.frame(
@@ -206,7 +210,7 @@ baseline_ucb_results_df <- data.frame(
 system.time({
   res_adv_ucb_common <- ucb_advanced(
     K, N, mu, y_global, z_global,
-    batch_size = 100,
+    batch_size = 1,
     dynamics = "common"
   )
 })
@@ -253,14 +257,14 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
 ## 3.1 Generate 25 datasets (only if not already generated)!
 
 ```{r}
-generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = 25)
+generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = 50)
 ```
 
 ## 3.2 TS
 
 Run simulations in parallel:
 ```{r}
-ts_runs_df <- future_lapply(1:25, function(i) {
+ts_runs_df <- future_lapply(1:10, function(i) {
   bind_rows(
     simulate_model_on_run(
       run_id = i, N = 5000, K = 2,
@@ -271,19 +275,17 @@ ts_runs_df <- future_lapply(1:25, function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2,
+      run_id = i, N = 500, K = 2,
       algorithm = "ts",
       complexity = "advanced",
       dynamics = "common",
       data_path = "data_global/A",
-      
       setting = "global"
     )
   )
-}) |> bind_rows()
+}, future.seed = TRUE) |> bind_rows()
 ```
-
-Comparison:
+Combine:
 ```{r}
 ts_summary <- ts_runs_df |>
   group_by(time, model_id) |>
@@ -292,22 +294,22 @@ ts_summary <- ts_runs_df |>
     avg_reward = mean(cumulative_reward),
     .groups = "drop"
   )
+```
 
-ggplot(ts_summary, aes(x = time, y = avg_regret, color = model_id)) +
-  geom_line(size = 1) +
-  labs(title = "Thompson Sampling: Average Cumulative Regret",
-       x = "Time", y = "Cumulative Regret") +
-  theme_minimal()
+
+Comparison:
+```{r}
+plot_cumulative_regret(ts_summary) 
 ```
 
 ## 3.3 UCB
 
 Run simulations in parallel:
 ```{r}
-ucb_runs_df <- future_lapply(1:25, function(i) {
+ucb_runs_df <- future_lapply(1:10, function(i) {
   bind_rows(
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2,
+      run_id = i, N = 500, K = 2,
       algorithm = "ucb",
       complexity = "baseline",
       dynamics = "common",
@@ -315,7 +317,15 @@ ucb_runs_df <- future_lapply(1:25, function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2,
+      run_id = i, N = 500, K = 2,
+      algorithm = "ucb",
+      complexity = "poor",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+    simulate_model_on_run(
+      run_id = i, N = 500, K = 2,
       algorithm = "ucb",
       complexity = "advanced",
       dynamics = "common",
@@ -323,10 +333,9 @@ ucb_runs_df <- future_lapply(1:25, function(i) {
       setting = "global"
     )
   )
-}) |> bind_rows()
+}, future.seed = TRUE) |> bind_rows()
 ```
-
-Comparison:
+Combine:
 ```{r}
 ucb_summary <- ucb_runs_df |>
   group_by(time, model_id) |>
@@ -335,12 +344,11 @@ ucb_summary <- ucb_runs_df |>
     avg_reward = mean(cumulative_reward),
     .groups = "drop"
   )
+```
 
-ggplot(ucb_summary, aes(x = time, y = avg_regret, color = model_id)) +
-  geom_line(size = 1) +
-  labs(title = "UCB: Average Cumulative Regret",
-       x = "Time", y = "Cumulative Regret") +
-  theme_minimal()
+Comparison:
+```{r}
+plot_cumulative_regret(ucb_summary) 
 ```
 
 
