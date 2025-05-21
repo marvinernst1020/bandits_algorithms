@@ -67,20 +67,6 @@ thompson_advanced <- function(K, N, mu, y_true, z_true, batch_size,
       update(model, burn)
       post <- coda.samples(model, c("mu", "pi", paste0("z[", N_window, "]")), n.iter = n_iter)
       post_matrix <- as.matrix(post)
-      ## avoid label‐switching:
-      post_matrix <- t(apply(post_matrix, 1, function(draw) {
-        if (draw["mu[1,1]"] > draw["mu[1,2]"]) {
-          tmp11 <- draw["mu[1,1]"]; tmp21 <- draw["mu[2,1]"]
-          draw["mu[1,1]"] <- draw["mu[1,2]"]
-          draw["mu[2,1]"] <- draw["mu[2,2]"]
-          draw["mu[1,2]"] <- tmp11
-          draw["mu[2,2]"] <- tmp21
-          tmp_pi <- draw["pi[1]"]
-          draw["pi[1]"] <- draw["pi[2]"]
-          draw["pi[2]"] <- tmp_pi
-        }
-        draw
-      })) 
       message(glue::glue("[{Sys.time()}] Performed inference at time step {t} (window {start_idx}:{t-1})"))
     }
     

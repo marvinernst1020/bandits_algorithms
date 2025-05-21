@@ -30,7 +30,7 @@ source(here("src/load_all.R"))
 
 Setting a seed:
 ```{r}
-set.seed(123)
+set.seed(12)
 ```
 
 ---
@@ -39,7 +39,7 @@ set.seed(123)
 
 Number of arms:
 ```{r}
-K <- 2 
+K <- 2
 ```
 
 Number of time steps:
@@ -56,8 +56,8 @@ pi_global <- matrix(c(0.999, 0.001,
 
 Probability of Reward:
 ```{r}
-mu <- matrix(c(0.1, 0.95,
-               0.95, 0.1),
+mu <- matrix(c(0.95, 0.95,
+               0.1, 0.95),
                 nrow = K, byrow = TRUE)
 ```
 
@@ -191,7 +191,7 @@ baseline_ucb_results <- bandit_baselines(
   algorithm='ucb-tuned',
   K, N, y_global, z_global, mu, 
   dynamics = "common",
-  batch_size = 100
+  batch_size = 1
   )
 ```
 
@@ -210,11 +210,12 @@ baseline_ucb_results_df <- data.frame(
 system.time({
   res_adv_ucb_common <- ucb_advanced(
     K, N, mu, y_global, z_global,
-    batch_size = 1,
+    batch_size = 100, burn = 1000, n_iter = 200,
     dynamics = "common"
   )
 })
 ```
+
 
 Store in df:
 ```{r}
@@ -254,17 +255,17 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
 
 # 3. Multiple Run - Average Model Comparison
 
-## 3.1 Generate 25 datasets (only if not already generated)!
+## 3.1 Generate 50 datasets (only if not already generated)!
 
 ```{r}
-generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = 50)
+generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = 30)
 ```
 
 ## 3.2 TS
 
 Run simulations in parallel:
 ```{r}
-ts_runs_df <- future_lapply(1:10, function(i) {
+ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
       run_id = i, N = 5000, K = 2,
@@ -274,10 +275,18 @@ ts_runs_df <- future_lapply(1:10, function(i) {
       data_path = "data_global/A",
       setting = "global"
     ),
-    simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      simulate_model_on_run(
+      run_id = i, N = 5000, K = 2, batch_size = 100, burn = 1000, n_iter = 200,
       algorithm = "ts",
-      complexity = "advanced",
+      complexity = "poor",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+    simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ts",
+      complexity = "advanced_batching", batch_size = 100, burn = 1000, n_iter = 200,
       dynamics = "common",
       data_path = "data_global/A",
       setting = "global"
@@ -285,6 +294,7 @@ ts_runs_df <- future_lapply(1:10, function(i) {
   )
 }, future.seed = TRUE) |> bind_rows()
 ```
+
 Combine:
 ```{r}
 ts_summary <- ts_runs_df |>
@@ -306,10 +316,10 @@ plot_cumulative_regret(ts_summary)
 
 Run simulations in parallel:
 ```{r}
-ucb_runs_df <- future_lapply(1:10, function(i) {
+ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      run_id = i, N = 5000, K = 2,
       algorithm = "ucb",
       complexity = "baseline",
       dynamics = "common",
@@ -317,7 +327,7 @@ ucb_runs_df <- future_lapply(1:10, function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      run_id = i, N = 5000, K = 2, batch_size = 100, burn = 1000, n_iter = 200,
       algorithm = "ucb",
       complexity = "poor",
       dynamics = "common",
@@ -325,7 +335,7 @@ ucb_runs_df <- future_lapply(1:10, function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 500, K = 2,
+      run_id = i, N = 5000, K = 2, batch_size = 100, burn = 1000, n_iter = 200,
       algorithm = "ucb",
       complexity = "advanced",
       dynamics = "common",
@@ -335,6 +345,7 @@ ucb_runs_df <- future_lapply(1:10, function(i) {
   )
 }, future.seed = TRUE) |> bind_rows()
 ```
+
 Combine:
 ```{r}
 ucb_summary <- ucb_runs_df |>
@@ -350,5 +361,8 @@ Comparison:
 ```{r}
 plot_cumulative_regret(ucb_summary) 
 ```
+
+
+
 
 

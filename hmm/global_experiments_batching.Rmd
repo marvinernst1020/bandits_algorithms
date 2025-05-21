@@ -274,6 +274,14 @@ ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       data_path = "data_global/A",
       setting = "global"
     ),
+      simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ts",
+      complexity = "poor",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
     simulate_model_on_run(
       run_id = i, N = 5000, K = 2,
       algorithm = "ts",
