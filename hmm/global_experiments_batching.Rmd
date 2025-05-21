@@ -1,0 +1,364 @@
+---
+title: "Global State Bandit Simulation"
+author: "Marvin Ernst, Oriol Gelabert, Melisa Vadenja"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rjags)
+library(coda)
+library(tidyverse)
+library(here)
+library(glue)
+library(future.apply)
+library(stats)
+library(nimble)
+plan(multisession)
+```
+
+
+# Problem Setup: Global Latent State
+
+We simulate a $K$-armed bandit problem where **all arms share the same underlying latent state process** governed by a Hidden Markov Model (HMM). This represents a scenario where there's a common environment or external condition that affects the reward probability of all arms.
+
+### Loading all the Models and Functions
+```{r}
+source(here("src/load_all.R"))
+```
+
+Setting a seed:
+```{r}
+set.seed(123)
+```
+
+---
+
+# GLOABL SETTING
+
+Number of arms:
+```{r}
+K <- 2 
+```
+
+Number of time steps:
+```{r}
+N <-5000
+```
+
+Transition Probability:
+```{r}
+pi_global <- matrix(c(0.999, 0.001,
+                     0.001, 0.999),
+                     nrow = 2, byrow = TRUE)  
+```
+
+Probability of Reward:
+```{r}
+mu <- matrix(c(0.1, 0.95,
+               0.95, 0.1),
+                nrow = K, byrow = TRUE)
+```
+
+---
+
+# 1. Generating Ground Truth Data for Global State
+
+## 1.1 Simulate Ground Truth
+
+For only one Run:
+```{r simulate-global-state}
+generate_global_datasets(
+  K = K,
+  N = N,
+  mu = mu,
+  pi_global = pi_global,
+  n_runs = 1,
+  scenario_name = "single_run",
+  root_path = "data_global"
+)
+```
+
+Load the generated data:
+```{r}
+truth <- readRDS("data_global/single_run/global_truth_1.rds")
+y_global <- truth$y
+z_global <- truth$z
+```
+
+
+# 1.2 Visualize Latent States
+
+```{r visualize-state}
+qplot(1:N, z_global, geom = "line") +
+  labs(title = "Latent Global State Over Time",
+       x = "Time", y = "State")
+```
+
+## 1.3 Visualize Rewards Per Arm
+
+```{r visualize-rewards}
+y_df <- as.data.frame(y_global)
+y_df <- y_df |> mutate(arm = factor(1:K)) |> 
+  pivot_longer(cols = starts_with("V"), names_to = "time", values_to = "reward") |>
+  mutate(time = as.numeric(gsub("V", "", time)))
+
+ggplot(y_df, aes(x = time, y = reward, color = arm)) +
+  geom_line() +
+  facet_wrap(~ arm, ncol = 1) +
+  labs(title = "Reward Streams Per Arm",
+       x = "Time", y = "Reward")
+```
+
+---
+
+# 2. Single Run - Model Comparison
+
+## 2.1 Thompson Sampling
+
+### Baseline
+```{r}
+baseline_ts_results <- bandit_baselines("ts", 
+                                        K, N, y_global, z_global, mu, 
+                                        dynamics = "common",
+                                        batch_size = 100)
+```
+
+Store in df:
+```{r}
+baseline_ts_results_df <- data.frame(
+  time = seq_along(baseline_ts_results$cumulative_reward),
+  cumulative_reward = baseline_ts_results$cumulative_reward,
+  cumulative_regret = baseline_ts_results$cumulative_regret,
+  model = "Baseline TS"
+)
+```
+
+### Adavanced Model
+```{r}
+system.time({
+res_adv_ts_common <- thompson_advanced_real_batching(K, N, mu, y_global, z_global, 
+                                       batch_size = 100, 
+                                       burn = 1000, n_iter = 200,
+                                       dynamics = "common")
+                                      # window_size = 3100)
+})
+```
+
+Store in df:
+```{r}
+adv_ts_results_df <- data.frame(
+  time = seq_along(res_adv_ts_common$cumulative_reward),
+  cumulative_reward = res_adv_ts_common$cumulative_reward,
+  cumulative_regret = res_adv_ts_common$cumulative_regret,
+  model = "Advanced TS"
+)
+```
+
+Combining results into one df:
+```{r}
+ts_compare_df_s1 <- bind_rows(baseline_ts_results_df, adv_ts_results_df)
+```
+
+### Cumulative Reward:
+```{r}
+ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_reward, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Reward: Baseline vs Advanced Thompson Sampling",
+       x = "Time",
+       y = "Cumulative Reward") +
+  theme_minimal()
+```
+
+### Cumulative Regret:
+```{r}
+ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Regret: Baseline vs Advanced Thompson Sampling",
+       x = "Time",
+       y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+
+
+## 2.2 UCB
+
+### Baseline
+```{r}
+baseline_ucb_results <- bandit_baselines(
+  algorithm='ucb-tuned',
+  K, N, y_global, z_global, mu, 
+  dynamics = "common",
+  batch_size = 100
+  )
+```
+
+Store in df:
+```{r}
+baseline_ucb_results_df <- data.frame(
+  time = seq_along(baseline_ucb_results$cumulative_reward),
+  cumulative_reward = baseline_ucb_results$cumulative_reward,
+  cumulative_regret = baseline_ucb_results$cumulative_regret,
+  model = "Baseline UCB"
+)
+```
+
+### Adavanced Model
+```{r}
+system.time({
+  res_adv_ucb_common <- ucb_advanced(
+    K, N, mu, y_global, z_global,
+    batch_size = 1,
+    dynamics = "common"
+  )
+})
+```
+
+Store in df:
+```{r}
+adv_ucb_results_df <- data.frame(
+  time = seq_along(res_adv_ucb_common$cumulative_reward),
+  cumulative_reward = res_adv_ucb_common$cumulative_reward,
+  cumulative_regret = res_adv_ucb_common$cumulative_regret,
+  model = "Advanced UCB"
+)
+```
+
+Combining results into one df:
+```{r}
+ucb_compare_df_s1 <- bind_rows(baseline_ucb_results_df, adv_ucb_results_df)
+```
+
+### Cumulative Reward:
+```{r}
+ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_reward, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Reward: Baseline vs Advanced UCB",
+       x = "Time",
+       y = "Cumulative Reward") +
+  theme_minimal()
+```
+
+### Cumulative Regret:
+```{r}
+ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Regret: Baseline vs Advanced UCB",
+       x = "Time",
+       y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+
+# 3. Multiple Run - Average Model Comparison
+
+## 3.1 Generate 50 datasets (only if not already generated)!
+
+```{r}
+generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = 50)
+```
+
+## 3.2 TS
+
+Run simulations in parallel:
+```{r}
+ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
+  bind_rows(
+    simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ts",
+      complexity = "baseline",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+      simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ts",
+      complexity = "poor",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+    simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ts",
+      complexity = "advanced_batching",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    )
+  )
+}, future.seed = TRUE) |> bind_rows()
+```
+
+Combine:
+```{r}
+ts_summary <- ts_runs_df |>
+  group_by(time, model_id) |>
+  summarise(
+    avg_regret = mean(cumulative_regret),
+    avg_reward = mean(cumulative_reward),
+    .groups = "drop"
+  )
+```
+
+
+Comparison:
+```{r}
+plot_cumulative_regret(ts_summary) 
+```
+
+## 3.3 UCB
+
+Run simulations in parallel:
+```{r}
+ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
+  bind_rows(
+    simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ucb",
+      complexity = "baseline",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+    simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ucb",
+      complexity = "poor",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+    simulate_model_on_run(
+      run_id = i, N = 5000, K = 2,
+      algorithm = "ucb",
+      complexity = "advanced",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    )
+  )
+}, future.seed = TRUE) |> bind_rows()
+```
+
+Combine:
+```{r}
+ucb_summary <- ucb_runs_df |>
+  group_by(time, model_id) |>
+  summarise(
+    avg_regret = mean(cumulative_regret),
+    avg_reward = mean(cumulative_reward),
+    .groups = "drop"
+  )
+```
+
+Comparison:
+```{r}
+plot_cumulative_regret(ucb_summary) 
+```
+
+

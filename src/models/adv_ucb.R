@@ -2,6 +2,7 @@
 
 ucb_advanced <- function(K, N, mu, y_true, z_true, batch_size, 
                          burn = 1000, n_iter = 100, 
+                         window_size = Inf, 
                          dynamics = c("common", "independent"),
                          model_path = NULL) {
   
@@ -51,23 +52,29 @@ ucb_advanced <- function(K, N, mu, y_true, z_true, batch_size,
     sampled_values <- numeric(K)
     
     if (sum(!is.na(observed_data)) >= K * 2 && t %% batch_size == 0) {
+      # sliding window logic
+      start_idx <- max(1, t - window_size)
+      y_window <- observed_data[, start_idx:(t - 1)]
+      N_window <- ncol(y_window)
+      
       data_list <- list(
-        y_obs = observed_data[, 1:(t-1)],
+        y_obs = y_window,
         K = K,
-        N = t - 1
+        N = N_window
       )
+      
       model <- jags.model(model_path, data = data_list, n.chains = 1, quiet = TRUE)
       update(model, burn)
-      post <- coda.samples(model, c("mu", "pi", paste0("z[", t - 1, "]")), n.iter = n_iter)
+      post <- coda.samples(model, c("mu", "pi", paste0("z[", N_window, "]")), n.iter = n_iter)
       post_matrix <- as.matrix(post)
-      message(glue::glue("[{Sys.time()}] Performed inference at time step {t}"))
+      message(glue::glue("[{Sys.time()}] Performed inference at time step {t} (window {start_idx}:{t-1})"))
     }
     
     if (is.matrix(post_matrix)) {
       pi0 <- post_matrix[, "pi[1]"]
       pi1 <- post_matrix[, "pi[2]"]
       if (t %% batch_size == 0) {
-        z_last <- post_matrix[, paste0("z[", t-1, "]")]
+        z_last <- post_matrix[, paste0("z[", N_window, "]")]
       }
       sampled_pi <- ifelse(z_last == 0, pi0, pi1)
       z_t <- rbinom(length(sampled_pi), size = 1, prob = sampled_pi)
