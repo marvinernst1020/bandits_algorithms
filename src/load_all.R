@@ -1,6 +1,7 @@
 # JAGS:
 poor_model_path <- "../src/models/poor_model.jags"
 advanced_model_path <- "../src/models/advanced_model.jags"
+ar_model_path <- "../src/models/ar_model.jags"
 
 # Models:
 model_files <- list.files("models", full.names = TRUE, pattern = "\\.R$")
@@ -18,3 +19,4 @@ source("../src/models/adv_ts.R")
 source("../src/models/adv_ucb.R")
 source("../src/models/poor_ts.R")
 source("../src/models/poor_ucb.R")
+source("../src/models/ar_ts.R")
