@@ -10,8 +10,8 @@ plot_cumulative_regret <- function(df, title = NULL, palette = NULL) {
   default_palette <- c(
     "M0 TS" = "#2CA02C",
     "M1 TS" = "#1F77B4",
-    "M2 TS" = "#D62728"
-    # "AR TS" = .... 
+    "M2 TS" = "#D62728",
+    # "AR TS" = .... ,
     
     "M0 UCB" = "#98DF8A",  
     "M1 UCB" = "#AEC7E8",  

@@ -39,7 +39,7 @@ simulate_model_on_run <- function(run_id, N, K,
                                dynamics = dynamics)
       model <- "M2 TS"
     } else if (complexity == "advanced_batching") {
-      res <- thompson_advanced_real_batching(K, N, data$mu, data$y, data$z,
+      res <- thompson_advanced(K, N, data$mu, data$y, data$z,
                            batch_size = 100, burn = 500, n_iter = 100,
                            dynamics = dynamics)
       model <- "M1 TS"
@@ -68,7 +68,7 @@ simulate_model_on_run <- function(run_id, N, K,
       res <- bandit_baselines("ucb-tuned", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 100)
       model <- "M0 UCB"
-    }
+    } # else if (complexity == "ar")
   } else {
     stop("Unsupported algorithm")
   }

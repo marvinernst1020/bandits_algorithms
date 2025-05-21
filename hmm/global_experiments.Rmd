@@ -30,7 +30,7 @@ source(here("src/load_all.R"))
 
 Setting a seed:
 ```{r}
-set.seed(12)
+set.seed(123) # maybe it was see 12
 ```
 
 ---
@@ -56,7 +56,7 @@ pi_global <- matrix(c(0.999, 0.001,
 
 Probability of Reward:
 ```{r}
-mu <- matrix(c(0.95, 0.95,
+mu <- matrix(c(0.95, 0.1,
                0.1, 0.95),
                 nrow = K, byrow = TRUE)
 ```
