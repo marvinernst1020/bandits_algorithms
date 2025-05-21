@@ -11,12 +11,12 @@ plot_cumulative_regret <- function(df, title = NULL, palette = NULL) {
     "M0 TS" = "#2CA02C",
     "M1 TS" = "#1F77B4",
     "M2 TS" = "#D62728",
-    # "AR TS" = .... ,
+    "AR TS" = "#002db3"
     
     "M0 UCB" = "#98DF8A",  
     "M1 UCB" = "#AEC7E8",  
-    "M2 UCB" = "#FF9896"  
-    # "AR UCB" = .... 
+    "M2 UCB" = "#FF9896",
+    "AR UCB" = "#9999ff"
   )
   
   ggplot(df, aes(x = time, y = avg_regret, color = model_id)) +
