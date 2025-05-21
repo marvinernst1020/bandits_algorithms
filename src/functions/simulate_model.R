@@ -4,7 +4,7 @@
 #' @param N Number of time steps to simulate
 #' @param K Number of arms
 #' @param algorithm Algorithm to use: "ts" or "ucb"
-#' @param complexity "advanced", "poor", or "baseline"
+#' @param complexity "advanced", "poor", "baseline" or "ar"
 #' @param dynamics "common" or "independent"
 #' @param data_path Folder where the dataset is stored
 #' @param model_paths Named list with model file paths
@@ -14,7 +14,7 @@
 
 simulate_model_on_run <- function(run_id, N, K,
                                   algorithm = c("ts", "ucb"),
-                                  complexity = c("advanced", "poor", "baseline"),
+                                  complexity = c("advanced", "poor", "baseline","ar"),
                                   dynamics = c("common", "independent"),
                                   data_path = "data_global/A",
                                   setting = c("global", "local")) {
@@ -52,6 +52,11 @@ simulate_model_on_run <- function(run_id, N, K,
       res <- bandit_baselines("ts", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 100)
       model <- "M0 TS"
+    } else if (complexity == "ar") {
+      res <- thompson_ar(K, N, data$mu, data$y, data$z,
+                         batch_size = 100, burn = 500, n_iter = 100,
+                         dynamics = dynamics)
+      model <- "AR TS"
     }
   } else if (algorithm == "ucb") {
     if (complexity == "advanced") {
@@ -68,7 +73,7 @@ simulate_model_on_run <- function(run_id, N, K,
       res <- bandit_baselines("ucb-tuned", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 100)
       model <- "M0 UCB"
-    } # else if (complexity == "ar")
+    } # else if (complexity == "ar") to be done
   } else {
     stop("Unsupported algorithm")
   }

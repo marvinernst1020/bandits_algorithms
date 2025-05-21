@@ -1,6 +1,5 @@
 
   model {
-             
     logit_mu[1] <- logit(mu1)           
     p[1] <- mu1       
     y[1] ~ dbern(p[1])
@@ -10,11 +9,10 @@
       p[t]<- ilogit(logit_mu[t])
       y[t] ~ dbern(p[t])
     }
-
-    #––– Priors on AR parameters –––
-    mu1        ~ dbeta(1, 1)   
-    phi    ~ dnorm(0, 1 / pow(0.5,2)) T(-1,1)  
+    
+    mu1 ~ dbeta(1, 1)   
+    phi ~ dnorm(0, 1 / pow(0.5,2)) T(-1,1)  
     sigma2 ~ dinvgamma(0.001, 0.001)            
-    tau     <- 1 / sigma2                       
+    tau <- 1 / sigma2                       
   }
   
