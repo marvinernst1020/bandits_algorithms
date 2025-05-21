@@ -62,24 +62,25 @@ cat(
 ##### AR Model:
 
 cat(
-  '
+  "
   model {
-    logit_mu[1] <- logit(mu1)           
-    p[1] <- mu1       
+    logit_mu[1] <- logit(mu1)
+    p[1] <- mu1
     y[1] ~ dbern(p[1])
 
     for (t in 2:N) {
       logit_mu[t] ~ dnorm(phi * logit_mu[t-1], tau)
-      p[t]<- ilogit(logit_mu[t])
-      y[t] ~ dbern(p[t])
+      p[t]  <- ilogit(logit_mu[t])
+      y[t]  ~ dbern(p[t])
     }
-    
-    mu1 ~ dbeta(1, 1)   
-    phi ~ dnorm(0, 1 / pow(0.5,2)) T(-1,1)  
-    sigma2 ~ dinvgamma(0.001, 0.001)            
-    tau <- 1 / sigma2                       
+
+    # priors
+    mu1 ~ dbeta(1, 1)
+    phi ~ dnorm(0, 1 / pow(0.5,2)) T(-1,1)
+    tau ~ dgamma(0.001, 0.001)     
+    sigma2 <- 1 / tau                
   }
-  ',
+  ",
   file = "models/ar_model.jags"
 )
 

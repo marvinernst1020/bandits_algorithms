@@ -48,7 +48,7 @@ thompson_ar <- function(K, N, mu, y_true, z_true, batch_size,
         m <- rjags::jags.model(model_path, data = data_list, n.chains = 1, quiet=TRUE)
         update(m, burn)
         # posterior of mu1 and last logit_mu[N]*
-        samp <- coda::coda.samples(
+        samp <- rjags::coda.samples(
           m,
           variable.names = c("mu1", ### p apo kjo?
                              paste0("logit_mu[", data_list$N, "]"),
