@@ -2,7 +2,7 @@ Scenario: single_run
 K: 3
 N: 1000
 
-theta:
+mu:
      [,1] [,2]
 [1,]  0.1  0.9
 [2,]  0.5  0.7

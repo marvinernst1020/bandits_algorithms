@@ -44,7 +44,7 @@ K <- 2
 
 Number of time steps:
 ```{r}
-N <- 2000
+N <- 5000
 ```
 
 Transition Probability:
@@ -259,7 +259,7 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
 
 ```{r}
 n_runs <- 3
-generate_global_datasets(K = 2, N = 2000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = n_runs)
+generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = n_runs)
 ```
 
 ## 3.2 TS
@@ -315,6 +315,12 @@ plot_cumulative_regret(ts_summary)
 
 ## 3.3 UCB
 
+```{r}
+
+print(mu_selected[oracle_arm])
+```
+
+
 Run simulations in parallel:
 ```{r}
 ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
@@ -328,7 +334,7 @@ ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2, batch_size = 100, burn = 1000, n_iter = 200,
+      run_id = i, N = 5000, K = 2, 
       algorithm = "ucb",
       complexity = "poor",
       dynamics = "common",
@@ -336,7 +342,7 @@ ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2, batch_size = 100, burn = 1000, n_iter = 200,
+      run_id = i, N = 5000, K = 2, 
       algorithm = "ucb",
       complexity = "advanced",
       dynamics = "common",

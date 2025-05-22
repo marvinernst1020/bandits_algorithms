@@ -16,7 +16,7 @@ simulate_model_on_run <- function(run_id, N, K,
                                   algorithm = c("ts", "ucb"),
                                   complexity = c("advanced", "poor", "baseline","ar"),
                                   dynamics = c("common", "independent"),
-                                  data_path = "data_global/A",
+                                  data_path = c("data_global/A","data_local/A"),
                                   setting = c("global", "local")) {
   
   algorithm <- match.arg(algorithm)

@@ -61,6 +61,9 @@ bandit_baselines <- function(algorithm, K, N, y_true, z_true, mu,
       idx <- current_arm  # this is now always defined
     }
     
+    if (idx > nrow(y_true) || t > ncol(y_true)) {
+      stop(glue::glue("Invalid index: idx={idx}, t={t}, dim={paste(dim(y_true), collapse='x')}"))
+    }
     reward <- y_true[idx, t]
     counts[idx] <- counts[idx] + 1
     rewards[idx] <- rewards[idx] + reward

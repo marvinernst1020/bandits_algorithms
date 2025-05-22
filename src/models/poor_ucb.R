@@ -35,7 +35,7 @@ ucb_poor <- function(K, N, mu, y_true, z_true, batch_size,
     }
   }
   oracle_arm <- apply(mu_selected, 2, which.max)
-  
+
   # Posterior tracking 
   posterior_matrices <- rep(list(1), K)
   z_last <- vector("list", K)
