@@ -73,7 +73,12 @@ simulate_model_on_run <- function(run_id, N, K,
       res <- bandit_baselines("ucb-tuned", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 1)
       model <- "M0 UCB"
-    } # else if (complexity == "ar") to be done
+    }  else if (complexity == "ar") {
+      res <- ucb_ar(K, N, data$mu, data$y, data$z,
+                    batch_size = 100, burn = 500, n_iter = 100,
+                    dynamics = dynamics)
+      model <- "AR UCB"
+    }
   } else {
     stop("Unsupported algorithm")
   }

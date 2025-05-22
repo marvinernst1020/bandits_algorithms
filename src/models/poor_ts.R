@@ -51,7 +51,7 @@ thompson_poor <- function(K, N, mu, y_true, z_true, batch_size,
           data_list <- list(y = observed_rewards[[k]], N = length(observed_rewards[[k]]))
           model <- rjags::jags.model(model_path, data = data_list, n.chains = 1, quiet = TRUE)
           update(model, burn)
-          post <- coda::coda.samples(model, c("mu0", "mu1", "pi", paste0("z[", data_list$N, "]")), n.iter = n_iter)
+          post <- rjags::coda.samples(model, c("mu0", "mu1", "pi", paste0("z[", data_list$N, "]")), n.iter = n_iter)
           post_matrix <- as.matrix(post)
           list(post = post_matrix, z = post_matrix[, paste0("z[", data_list$N, "]")])
         } else {
