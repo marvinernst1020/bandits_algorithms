@@ -7,7 +7,7 @@ output: html_document
 
 only once:
 ```{r}
-install.packages("KFAS")
+#install.packages("KFAS")
 ```
 
 
@@ -51,7 +51,7 @@ K <- 2
 
 Number of time steps:
 ```{r}
-N <- 500
+N <- 5000
 ```
 
 Transition Probability:
@@ -145,7 +145,7 @@ baseline_ts_results_df <- data.frame(
 ### Adavanced Model
 ```{r}
 system.time({
-res_kfas_ar <- thompson_ar_kfas(K, N, mu, y_global, z_global, batch_size = 100)
+res_kfas_ar <- thompson_ar_kfas(K, N, mu, y_global, z_global, batch_size = 10)
 })
 ```
 
