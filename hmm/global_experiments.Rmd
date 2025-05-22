@@ -259,41 +259,45 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
 
 ```{r}
 n_runs <- 3
-generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = n_runs)
+generate_global_datasets(K = 2, N = N, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = n_runs)
 ```
 
 ## 3.2 TS
 
 Run simulations in parallel:
 ```{r}
-ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
-  bind_rows(
-    simulate_model_on_run(
-      run_id = i, N = N, K = 2,
-      algorithm = "ts",
-      complexity = "baseline",
-      dynamics = "common",
-      data_path = "data_global/A",
-      setting = "global"
-    ),
+ts_runtime <- system.time({
+  ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
+    bind_rows(
       simulate_model_on_run(
-      run_id = i, N = N, K = 2,
-      algorithm = "ts",
-      complexity = "poor",
-      dynamics = "common",
-      data_path = "data_global/A",
-      setting = "global"
-    ),
-    simulate_model_on_run(
-      run_id = i, N = N, K = 2, 
-      algorithm = "ts",
-      complexity = "advanced", 
-      dynamics = "common",
-      data_path = "data_global/A",
-      setting = "global"
+        run_id = i, N = N, K = 2,
+        algorithm = "ts",
+        complexity = "baseline",
+        dynamics = "common",
+        data_path = "data_global/A",
+        setting = "global"
+      ),
+      simulate_model_on_run(
+        run_id = i, N = N, K = 2,
+        algorithm = "ts",
+        complexity = "poor",
+        dynamics = "common",
+        data_path = "data_global/A",
+        setting = "global"
+      ),
+      simulate_model_on_run(
+        run_id = i, N = N, K = 2, 
+        algorithm = "ts",
+        complexity = "advanced", 
+        dynamics = "common",
+        data_path = "data_global/A",
+        setting = "global"
+      )
     )
-  )
-}, future.seed = TRUE) |> bind_rows()
+  }, future.seed = TRUE) |> bind_rows()
+})
+
+print(ts_runtime)
 ```
 
 Combine:
@@ -315,18 +319,13 @@ plot_cumulative_regret(ts_summary)
 
 ## 3.3 UCB
 
-```{r}
-
-print(mu_selected[oracle_arm])
-```
-
 
 Run simulations in parallel:
 ```{r}
 ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2,
+      run_id = i, N = N, K = 2,
       algorithm = "ucb",
       complexity = "baseline",
       dynamics = "common",
@@ -334,7 +333,7 @@ ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2, 
+      run_id = i, N = N, K = 2, 
       algorithm = "ucb",
       complexity = "poor",
       dynamics = "common",
@@ -342,7 +341,7 @@ ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2, 
+      run_id = i, N = N, K = 2, 
       algorithm = "ucb",
       complexity = "advanced",
       dynamics = "common",

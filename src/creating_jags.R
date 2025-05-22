@@ -69,7 +69,7 @@ cat(
     y[1] ~ dbern(p[1])
 
     for (t in 2:N) {
-      eps[t]       ~ dnorm(0, tau)                    
+      eps[t]       ~ dnorm(0, 1/tau)                    
       logit_mu[t]  <- phi * logit_mu[t-1] + eps[t]
       p[t]  <- ilogit(logit_mu[t])
       y[t]  ~ dbern(p[t])
@@ -83,4 +83,6 @@ cat(
   ",
   file = "models/ar_model.jags"
 )
+
 ## or logit_mu[t] ~ dnorm(phi * logit_mu[t-1], tau)
+### so maybe remove p[t]
