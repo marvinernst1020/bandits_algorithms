@@ -44,7 +44,7 @@ K <- 2
 
 Number of time steps:
 ```{r}
-N <- 5000
+N <- 2000
 ```
 
 Transition Probability:
