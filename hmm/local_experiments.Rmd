@@ -269,7 +269,7 @@ ggplot(ucb_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
 ## 2.4 AR UCB
 
 ```{r}
-res_ar_ucb <- ucb_ar(K, N, theta, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+res_ar_ucb <- ucb_nimble_ar(K, N, theta, y_local, z_local, batch_size = 100, burn = 100, n_iter = 150, dynamics = "independent")
 ```
 
 ```{r}
