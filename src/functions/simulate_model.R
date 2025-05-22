@@ -35,43 +35,43 @@ simulate_model_on_run <- function(run_id, N, K,
   if (algorithm == "ts") {
     if (complexity == "advanced") {
       res <- thompson_advanced(K, N, data$mu, data$y, data$z,
-                               batch_size = 100, burn = 500, n_iter = 100,
+                               batch_size = 100, burn = 1000, n_iter = 200,
                                dynamics = dynamics)
       model <- "M2 TS"
     } else if (complexity == "advanced_batching") {
       res <- thompson_advanced(K, N, data$mu, data$y, data$z,
-                           batch_size = 100, burn = 500, n_iter = 100,
+                           batch_size = 100, burn = 1000, n_iter = 200,
                            dynamics = dynamics)
       model <- "M1 TS"
     } else if (complexity == "poor") {
       res <- thompson_poor(K, N, data$mu, data$y, data$z,
-                           batch_size = 100, burn = 500, n_iter = 100,
+                           batch_size = 100, burn = 1000, n_iter = 200,
                            dynamics = dynamics)
       model <- "M1 TS"
     } else if (complexity == "baseline") {
       res <- bandit_baselines("ts", K, N, data$y, data$z, data$mu,
-                              dynamics = dynamics, batch_size = 100)
+                              dynamics = dynamics, batch_size = 1)
       model <- "M0 TS"
     } else if (complexity == "ar") {
       res <- thompson_ar(K, N, data$mu, data$y, data$z,
-                         batch_size = 100, burn = 500, n_iter = 100,
+                         batch_size = 100, burn = 1000, n_iter = 200,
                          dynamics = dynamics)
       model <- "AR TS"
     }
   } else if (algorithm == "ucb") {
     if (complexity == "advanced") {
       res <- ucb_advanced(K, N, data$mu, data$y, data$z,
-                          batch_size = 100, burn = 500, n_iter = 100,
+                          batch_size = 100, burn = 1000, n_iter = 200,
                           dynamics = dynamics)
       model <- "M2 UCB"
     } else if (complexity == "poor") {
       res <- ucb_poor(K, N, data$mu, data$y, data$z,
-                      batch_size = 100, burn = 500, n_iter = 100,
+                      batch_size = 100, burn = 1000, n_iter = 200,
                       dynamics = dynamics)
       model <- "M1 UCB"
     } else if (complexity == "baseline") {
       res <- bandit_baselines("ucb-tuned", K, N, data$y, data$z, data$mu,
-                              dynamics = dynamics, batch_size = 100)
+                              dynamics = dynamics, batch_size = 1)
       model <- "M0 UCB"
     } # else if (complexity == "ar") to be done
   } else {

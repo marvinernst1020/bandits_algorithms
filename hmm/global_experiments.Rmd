@@ -30,7 +30,7 @@ source(here("src/load_all.R"))
 
 Setting a seed:
 ```{r}
-set.seed(123) # maybe it was see 12
+set.seed(13) 
 ```
 
 ---
@@ -258,7 +258,8 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
 ## 3.1 Generate 50 datasets (only if not already generated)!
 
 ```{r}
-generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = 30)
+n_runs <- 3
+generate_global_datasets(K = 2, N = 2000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = n_runs)
 ```
 
 ## 3.2 TS
@@ -268,7 +269,7 @@ Run simulations in parallel:
 ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2,
+      run_id = i, N = N, K = 2,
       algorithm = "ts",
       complexity = "baseline",
       dynamics = "common",
@@ -276,7 +277,7 @@ ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
       simulate_model_on_run(
-      run_id = i, N = 5000, K = 2, batch_size = 100, burn = 1000, n_iter = 200,
+      run_id = i, N = N, K = 2,
       algorithm = "ts",
       complexity = "poor",
       dynamics = "common",
@@ -284,9 +285,9 @@ ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2,
+      run_id = i, N = N, K = 2, 
       algorithm = "ts",
-      complexity = "advanced_batching", batch_size = 100, burn = 1000, n_iter = 200,
+      complexity = "advanced", 
       dynamics = "common",
       data_path = "data_global/A",
       setting = "global"

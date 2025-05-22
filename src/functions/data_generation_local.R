@@ -4,13 +4,13 @@
 #'
 #' @param K Number of arms
 #' @param N Number of time steps
-#' @param theta K x 2 matrix of reward probabilities (rows = arms, cols = latent states)
+#' @param mu K x 2 matrix of reward probabilities (rows = arms, cols = latent states)
 #' @param pi_list List of K transition matrices (2x2 each) for each arm's latent state
 #' @param n_runs Number of datasets to generate
 #' @param scenario_name Optional name to use for the saved folder
 #' @param root_path Root folder where scenario folders will be stored
 
-generate_local_datasets <- function(K = 3, N = 1000, theta, pi_list,
+generate_local_datasets <- function(K = 3, N = 1000, mu, pi_list,
                                     n_runs = 25,
                                     scenario_name = NULL,
                                     root_path = "data_local") {
@@ -30,15 +30,15 @@ generate_local_datasets <- function(K = 3, N = 1000, theta, pi_list,
     
     for (i in 1:K) {
       z_local[i, 1] <- rbinom(1, 1, 0.5)
-      y_local[i, 1] <- rbinom(1, 1, theta[i, z_local[i, 1] + 1])
+      y_local[i, 1] <- rbinom(1, 1, mu[i, z_local[i, 1] + 1])
       
       for (t in 2:N) {
         z_local[i, t] <- rbinom(1, 1, pi_list[[i]][z_local[i, t - 1] + 1, 2])
-        y_local[i, t] <- rbinom(1, 1, theta[i, z_local[i, t] + 1])
+        y_local[i, t] <- rbinom(1, 1, mu[i, z_local[i, t] + 1])
       }
     }
     
-    saveRDS(list(y = y_local, z = z_local, theta = theta, pi = pi_list),
+    saveRDS(list(y = y_local, z = z_local, mu = mu, pi = pi_list),
             file = file.path(save_path, paste0("local_truth_", run, ".rds")))
   }
   
@@ -51,7 +51,7 @@ generate_local_datasets <- function(K = 3, N = 1000, theta, pi_list,
     "Scenario: ", scenario_name, "\n",
     "K: ", K, "\n",
     "N: ", N, "\n\n",
-    "theta:\n", paste(capture.output(print(theta)), collapse = "\n"), "\n\n",
+    "mu:\n", paste(capture.output(print(mu)), collapse = "\n"), "\n\n",
     "pi_list:\n", pi_text
   )
   
