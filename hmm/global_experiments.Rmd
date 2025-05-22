@@ -30,7 +30,7 @@ source(here("src/load_all.R"))
 
 Setting a seed:
 ```{r}
-set.seed(13) 
+set.seed(123) 
 ```
 
 ---
@@ -44,7 +44,7 @@ K <- 2
 
 Number of time steps:
 ```{r}
-N <- 5000
+N <- 500
 ```
 
 Transition Probability:
@@ -258,8 +258,8 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
 ## 3.1 Generate 50 datasets (only if not already generated)!
 
 ```{r}
-n_runs <- 3
-generate_global_datasets(K = 2, N = 5000, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = n_runs)
+n_runs <- 30
+generate_global_datasets(K = K, N = N, mu = mu, pi_global = pi_global, scenario_name = "A", n_runs = n_runs)
 ```
 
 ## 3.2 TS
