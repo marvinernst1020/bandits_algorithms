@@ -75,7 +75,7 @@ Generate and save a single local dataset:
 
 ```{r}
 args(generate_local_datasets)
-generate_local_datasets(K = K, N = 5000, mu = theta, pi_list = pi_list, n_runs = 1, scenario_name = "single_run", root_path = "data_local")
+generate_local_datasets(K = K, N = 5000, mu = mu, pi_list = pi_list, n_runs = 1, scenario_name = "single_run", root_path = "data_local")
 ```
 
 Load the generated data:
@@ -123,7 +123,7 @@ ggplot(y_df, aes(x = time, y = reward, color = arm)) +
 ### Baseline
 
 ```{r}
-baseline_ts_results <- bandit_baselines("ts", K, N, y_local, z_local, theta, dynamics = "independent", batch_size = 100)
+baseline_ts_results <- bandit_baselines("ts", K, N, y_local, z_local, mu, dynamics = "independent", batch_size = 100)
 ```
 
 Store in df:
@@ -140,7 +140,7 @@ baseline_ts_df <- data.frame(
 
 ```{r}
 
-res_poor_ts <- thompson_poor(K, N, theta, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+res_poor_ts <- thompson_poor(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
 ```
 
 Store in df:
@@ -179,7 +179,7 @@ ggplot(ts_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
 
 
 ```{r}
-res_ts_ar <- thompson_ar(K, N, theta, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+res_ts_ar <- thompson_ar(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
 ```
 
 ```{r}
@@ -229,7 +229,7 @@ baseline_ucb_df <- data.frame(
 
 ### poor
 ```{r}
-res_poor_ucb <- ucb_poor(K, N, theta, y_local, z_local, batch_size = 100,
+res_poor_ucb <- ucb_poor(K, N, mu, y_local, z_local, batch_size = 100,
                             burn = 500, n_iter = 100, dynamics = "independent")
 ```
 
@@ -269,7 +269,7 @@ ggplot(ucb_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
 ## 2.4 AR UCB
 
 ```{r}
-res_ar_ucb <- ucb_ar(K, N, theta, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+res_ar_ucb <- ucb_ar(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
 ```
 
 ```{r}
@@ -435,13 +435,5 @@ ggplot(combined_df, aes(x = time, y = avg_regret, color = model)) +
     x = "Time", y = "Cumulative Regret", color = "Model"
   ) +
   theme_minimal()
-```
-
-
-```{r}
-```
-
-
-```{r}
 ```
 
