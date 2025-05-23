@@ -1616,20 +1616,24 @@ files = [
 ]
 
 [[package]]
-name = "pyxab"
-version = "0.1.5"
+name = "PyXAB"
+version = "0.3.0"
 description = "PyXAB - A Python Library for X-Armed Bandit and Online Blackbox Optimization Algorithms."
 optional = false
 python-versions = ">=3.6.0"
 groups = ["main"]
-files = [
-    {file = "PyXAB-0.1.5-py3-none-any.whl", hash = "sha256:4ef3e741822fce4d0f318710987c8199931cb64ec8d701836da8f8fbd5e1a8a3"},
-    {file = "PyXAB-0.1.5.tar.gz", hash = "sha256:90fb3dc9c4b976dc47e0b3616d10d3ae5d0638fea6a98d7cc0d35c830671a999"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 matplotlib = "*"
 numpy = ">=1.20.3"
+
+[package.source]
+type = "git"
+url = "https://github.com/WilliamLwj/PyXAB.git"
+reference = "HEAD"
+resolved_reference = "af420ebeb8214cdd35cbf9c946d07883736981e9"
 
 [[package]]
 name = "pyzmq"
@@ -2147,4 +2151,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "3fd02b0a3af4121055a5d1ec453ee1135fd8983845aa85d70b8e7a1106db64cb"
+content-hash = "85d2fbe2ee2219310d94fb1556b1637fb114e0faf5b5b6a751d7119a6b0a7e7c"

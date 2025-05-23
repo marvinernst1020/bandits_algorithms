@@ -10,12 +10,12 @@ python = "^3.11"
 numpy = "^1.26"
 matplotlib = "^3.8"
 scikit-learn = "^1.4"
-PyXAB = "^0.1"
 pyro-ppl = "^1.9.0"
 torch = "^2.2.0"
 pandas = "^2.2"
 ipykernel = "^6.29"
 seaborn = "^0.12"
+pyxab = {git = "https://github.com/WilliamLwj/PyXAB.git"}
 
 [build-system]
 requires = ["poetry-core"]
