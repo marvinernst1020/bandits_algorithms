@@ -39,17 +39,7 @@ def ensure_scalar(x):
         return x[0] if x.size == 1 else np.nan 
     return x
 
-
-# --- New function: plot_arm_positions ---
 def plot_arm_positions(arms, rewards=None, title="Arm Positions in 2D Space"):
-    """
-    Plots the 2D positions of arms. Optionally colors them by their expected reward.
-    
-    Parameters:
-    - arms (np.ndarray): 2D coordinates of arms, shape (K, 2)
-    - rewards (np.ndarray or list): Optional, reward values for color
-    - title (str): Plot title
-    """
     plt.figure(figsize=(6, 6))
     if rewards is not None:
         sc = plt.scatter(arms[:, 0], arms[:, 1], c=rewards, cmap="viridis", s=100, edgecolors='k')
