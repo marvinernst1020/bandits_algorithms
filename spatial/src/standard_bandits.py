@@ -50,16 +50,16 @@ class GaussianUCB:
         self.squared_sums = np.zeros(K)
 
     def select_arm(self, t=None):
-        if (t or 1) < self.K:
-            return t
+        if t is None or t < self.K:
+            return t if t is not None else np.random.randint(0, self.K)
         ucb_values = np.zeros(self.K)
         for a in range(self.K):
             n = self.counts[a]
             mu = self.means[a]
             var_hat = (self.squared_sums[a] / n - mu**2) if n > 1 else 0
             bonus = np.sqrt(
-                (np.log(t or 1) / n) *
-                min(1/4, var_hat + np.sqrt(2 * np.log(t or 1) / n))
+                (np.log(t or 1) / (n + 1e-8)) *
+                min(1/4, var_hat + np.sqrt(2 * np.log(t or 1) / (n + 1e-8)))
             )
             ucb_values[a] = mu + bonus
         return np.argmax(ucb_values)
