@@ -12,14 +12,16 @@ plot_cumulative_regret <- function(df, title = NULL, palette = NULL) {
     "M1 TS" = "#1F77B4",
     "M2 TS" = "#D62728",
     "AR TS" = "#002db3",
+    "KFAS TS" = "#f34fef",
     
     "M0 UCB" = "#98DF8A",  
     "M1 UCB" = "#AEC7E8",  
     "M2 UCB" = "#FF9896",
-    "AR UCB" = "#9999ff"
+    "AR UCB" = "#9999ff",
+    "KFAS UCB" = "#11e999"
   )
   
-  ggplot(df, aes(x = time, y = avg_regret, color = model_id)) +
+  p1<-ggplot(df, aes(x = time, y = avg_regret, color = model_id)) +
     geom_line(size = 0.9) +
     labs(
       title = title,
@@ -32,4 +34,20 @@ plot_cumulative_regret <- function(df, title = NULL, palette = NULL) {
       legend.position = "bottom",
       legend.title = element_blank()
     )
+  
+  p2<-ggplot(df, aes(x = time, y = inst_regret, color = model_id)) +
+    geom_line(size = 0.9) +
+    labs(
+      title = title,
+      x = "Time Step",
+      y = "Average Instantaneous Regret"
+    ) +
+    scale_color_manual(values = palette %||% default_palette) +
+    theme_classic(base_size = 12) +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_blank()
+    )
+  
+  return(list(cumulative = p1, instantaneous = p2))
 }

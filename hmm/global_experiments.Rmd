@@ -18,6 +18,14 @@ library(nimble)
 plan(multisession)
 ```
 
+```{r}
+output_dir <- "plots"
+
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+```
+
 
 # Problem Setup: Global Latent State
 
@@ -30,7 +38,7 @@ source(here("src/load_all.R"))
 
 Setting a seed:
 ```{r}
-set.seed(123) 
+set.seed(123)
 ```
 
 ---
@@ -44,7 +52,7 @@ K <- 2
 
 Number of time steps:
 ```{r}
-N <- 500
+N <- 5000
 ```
 
 Transition Probability:
@@ -163,25 +171,55 @@ ts_compare_df_s1 <- bind_rows(baseline_ts_results_df, adv_ts_results_df)
 
 ### Cumulative Reward:
 ```{r}
-ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_reward, color = model)) +
-  geom_line(size = 1) +
+plotts<-ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_reward, color = model)) +
+  geom_line(linewidth = 1) +
   labs(title = "Cumulative Reward: Baseline vs Advanced Thompson Sampling",
        x = "Time",
        y = "Cumulative Reward") +
   theme_minimal()
+
+ggsave(file.path(output_dir, "ts_cumulative_reward_single.png"), plot = plotts, width = 8, height = 6, dpi = 300)
 ```
 
 ### Cumulative Regret:
 ```{r}
-ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
+plotts<-ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
   geom_line(size = 1) +
   labs(title = "Cumulative Regret: Baseline vs Advanced Thompson Sampling",
        x = "Time",
        y = "Cumulative Regret") +
   theme_minimal()
+
+ggsave(file.path(output_dir, "ts_cumulative_regret_single.png"), plot = plotts, width = 8, height = 6, dpi = 300)
 ```
 
+```{r}
+ts_compare_df_s1 <- ts_compare_df_s1 %>%
+  group_by(model) %>%
+  arrange(time) %>%
+  mutate(inst_regret= c(0, diff(cumulative_regret)))
 
+ggplot(ts_compare_df_s1, aes(x = time, y = inst_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Instantaneous Regret: Baseline vs Advanced Thompson Sampling",
+       x = "Time",
+       y = "Instantaneous Regret") +
+  theme_minimal()
+```
+```{r}
+inst_regret_diff_df <- ts_compare_df_s1 %>%
+  select(time, model, inst_regret) %>%
+  pivot_wider(names_from = model, values_from = inst_regret) %>%
+  mutate(regret_diff = `Advanced TS` - `Baseline TS`)
+
+# Plot the difference in instantaneous regret
+ggplot(inst_regret_diff_df, aes(x = time, y = regret_diff)) +
+  geom_line(color = "darkred", size = 1) +
+  labs(title = "Difference in Instantaneous Regret (Advanced - Baseline)",
+       x = "Time",
+       y = "Regret Difference") +
+  theme_minimal()
+```
 
 ## 2.2 UCB
 
@@ -234,20 +272,116 @@ ucb_compare_df_s1 <- bind_rows(baseline_ucb_results_df, adv_ucb_results_df)
 
 ### Cumulative Reward:
 ```{r}
-ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_reward, color = model)) +
+plotucb<-ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_reward, color = model)) +
   geom_line(size = 1) +
   labs(title = "Cumulative Reward: Baseline vs Advanced UCB",
        x = "Time",
        y = "Cumulative Reward") +
   theme_minimal()
+
+ggsave(file.path(output_dir, "ucb_cumulative_reward_single.png"), plot = plotucb, width = 8, height = 6, dpi = 300)
 ```
 
 ### Cumulative Regret:
 ```{r}
-ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
+plotucb<-ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
   geom_line(size = 1) +
   labs(title = "Cumulative Regret: Baseline vs Advanced UCB",
        x = "Time",
+       y = "Cumulative Regret") +
+  theme_minimal()
+
+ggsave(file.path(output_dir, "ucb_cumulative_regret_single.png"), plot = plotucb, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+ucb_compare_df_s1 <- ucb_compare_df_s1 %>%
+  group_by(model) %>%
+  arrange(time) %>%
+  mutate(inst_regret= c(0, diff(cumulative_regret)))
+
+ggplot(ucb_compare_df_s1, aes(x = time, y = inst_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Instantaneous Regret: Baseline vs Advanced UCB",
+       x = "Time",
+       y = "Instantaneous Regret") +
+  theme_minimal()
+```
+
+
+## 2.3 KFAS AR
+
+### 2.3.1 TS KFAS
+
+#### Baseline
+
+```{r}
+baseline_ts_results <- bandit_baselines("ts", K,N,y_global,z_global,mu,
+                                        dynamics = "common", batch_size = 1)
+baseline_ts_results_df <- data.frame(
+  time               = seq_along(baseline_ts_results$cumulative_reward),
+  cumulative_reward  = baseline_ts_results$cumulative_reward,
+  cumulative_regret  = baseline_ts_results$cumulative_regret,
+  model              = "Baseline TS")
+```
+
+### AR
+
+```{r}
+res_kfas_ar <- thompson_ar_kfas(
+  K,N,mu,y_global,z_global,
+  batch_size = 100, burn = 1000, n_iter = 200,
+  dynamics   = "common")
+kfas_ar_results_df <- data.frame(
+  time               = seq_along(res_kfas_ar$cumulative_reward),
+  cumulative_reward  = res_kfas_ar$cumulative_reward,
+  cumulative_regret  = res_kfas_ar$cumulative_regret,
+  model              = "KFAS AR TS")
+```
+
+
+```{r}
+ts_compare_df <- bind_rows(baseline_ts_results_df, kfas_ar_results_df)
+
+ggplot(ts_compare_df, aes(time, cumulative_reward, colour = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Reward: Baseline vs KFAS AR(1) TS",
+       y = "Cumulative Reward") +
+  theme_minimal()
+
+ggplot(ts_compare_df, aes(time, cumulative_regret, colour = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Regret: Baseline vs KFAS AR(1) TS",
+       y = "Cumulative Regret") +
+  theme_minimal()
+```
+### 2.3.2 UCB KFAS
+
+```{r}
+res_kfas_ucb <- ucb_ar_kfas(
+  K,N,mu,y_global,z_global,
+  batch_size = 100, burn = 1000, n_iter = 200,
+  dynamics   = "common")
+kfas_ucb_results_df <- data.frame(
+  time               = seq_along(res_kfas_ucb$cumulative_reward),
+  cumulative_reward  = res_kfas_ucb$cumulative_reward,
+  cumulative_regret  = res_kfas_ucb$cumulative_regret,
+  model              = "KFAS AR UCB")
+```
+
+
+```{r}
+ucb_compare_df <- bind_rows(baseline_ucb_results_df, kfas_ucb_results_df)
+
+ggplot(ucb_compare_df, aes(time, cumulative_reward, colour = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Reward: Baseline vs KFAS AR(1) UCB",
+       y = "Cumulative Reward") +
+  theme_minimal()
+
+ggplot(ucb_compare_df, aes(time, cumulative_regret, colour = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Regret: Baseline vs KFAS AR(1) UCB",
        y = "Cumulative Regret") +
   theme_minimal()
 ```
@@ -269,7 +403,7 @@ Run simulations in parallel:
 ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
-      run_id = i, N = N, K = 2,
+      run_id = i, N = N, K = K,
       algorithm = "ts",
       complexity = "baseline",
       dynamics = "common",
@@ -277,7 +411,7 @@ ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
       simulate_model_on_run(
-      run_id = i, N = N, K = 2,
+      run_id = i, N = N, K = K,
       algorithm = "ts",
       complexity = "poor",
       dynamics = "common",
@@ -285,18 +419,24 @@ ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = N, K = 2, 
+      run_id = i, N = N, K = K,
       algorithm = "ts",
-      complexity = "advanced", 
+      complexity = "advanced",
       dynamics = "common",
       data_path = "data_global/A",
       setting = "global"
-    )
+    ),
+    simulate_model_on_run(
+      run_id=i, N=N, K=K,
+      algorithm="ts", complexity="kfas",  
+      dynamics="common",
+      data_path="data_global/A", setting="global")
   )
 }, future.seed = TRUE) |> bind_rows()
 ```
 
 Combine:
+
 ```{r}
 ts_summary <- ts_runs_df |>
   group_by(time, model_id) |>
@@ -304,29 +444,34 @@ ts_summary <- ts_runs_df |>
     avg_regret = mean(cumulative_regret),
     avg_reward = mean(cumulative_reward),
     .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
   )
+
 ```
 
 
 Comparison:
 ```{r}
-plot_cumulative_regret(ts_summary) 
+plots<-plot_cumulative_regret(ts_summary) 
+
+ggsave(file.path(output_dir, "ts_cumulative_regret.png"), plot = plots$cumulative, width = 8, height = 6, dpi = 300)
+ggsave(file.path(output_dir, "ts_instantaneous_regret.png"), plot = plots$instantaneous, width = 8, height = 6, dpi = 300)
 ```
+
 
 ## 3.3 UCB
-
-```{r}
-
-print(mu_selected[oracle_arm])
-```
-
 
 Run simulations in parallel:
 ```{r}
 ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   bind_rows(
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2,
+      run_id = i, N = N, K = K,
       algorithm = "ucb",
       complexity = "baseline",
       dynamics = "common",
@@ -334,7 +479,7 @@ ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2, 
+      run_id = i, N = N, K = K,
       algorithm = "ucb",
       complexity = "poor",
       dynamics = "common",
@@ -342,13 +487,18 @@ ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
       setting = "global"
     ),
     simulate_model_on_run(
-      run_id = i, N = 5000, K = 2, 
+      run_id = i, N = N, K = K,
       algorithm = "ucb",
       complexity = "advanced",
       dynamics = "common",
       data_path = "data_global/A",
       setting = "global"
-    )
+    ),
+    simulate_model_on_run(
+      run_id=i, N=N, K=K,
+      algorithm="ucb", complexity="kfas",
+      dynamics="common",
+      data_path="data_global/A", setting="global")
   )
 }, future.seed = TRUE) |> bind_rows()
 ```
@@ -361,13 +511,24 @@ ucb_summary <- ucb_runs_df |>
     avg_regret = mean(cumulative_regret),
     avg_reward = mean(cumulative_reward),
     .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
   )
 ```
 
 Comparison:
 ```{r}
-plot_cumulative_regret(ucb_summary) 
+plots<-plot_cumulative_regret(ucb_summary) 
+
+ggsave(file.path(output_dir, "ucb_cumulative_regret.png"), plot = plots$cumulative, width = 8, height = 6, dpi = 300)
+ggsave(file.path(output_dir, "ucb_instantaneous_regret.png"), plot = plots$instantaneous, width = 8, height = 6, dpi = 300)
 ```
+
+
 
 
 

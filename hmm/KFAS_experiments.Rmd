@@ -11,7 +11,7 @@ only once:
 ```
 
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, warning = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(rjags)
 library(coda)
@@ -21,16 +21,10 @@ library(glue)
 library(future.apply)
 library(stats)
 library(KFAS)
+library(nimble)                  
 plan(multisession)
 ```
 
-
-
-# Problem Setup: Global Latent State
-
-We simulate a $K$-armed bandit problem where **all arms share the same underlying latent state process** governed by a Hidden Markov Model (HMM). This represents a scenario where there's a common environment or external condition that affects the reward probability of all arms.
-
-### Loading all the Models and Functions
 ```{r}
 source(here("src/load_all.R"))
 ```
@@ -39,10 +33,6 @@ Setting a seed:
 ```{r}
 set.seed(123) 
 ```
-
----
-
-# GLOABL SETTING
 
 Number of arms:
 ```{r}
@@ -53,6 +43,256 @@ Number of time steps:
 ```{r}
 N <- 5000
 ```
+
+# LOCAL SETTING 
+
+```{r}
+pi_list <- list(
+  matrix(c(0.997, 0.003,
+           0.003, 0.997), nrow = 2, byrow = TRUE),  
+  matrix(c(0.997, 0.003,
+           0.003, 0.997), nrow = 2, byrow = TRUE)  
+)
+```
+
+```{r}
+mu <- matrix(c(
+  0.95, 0.1,  #
+  0.5,  0.7   
+), nrow = K, byrow = TRUE)
+```
+
+---
+
+# 1. Generating Ground Truth Data for Local States
+
+Generate and save a single local dataset:
+
+```{r}
+args(generate_local_datasets)
+generate_local_datasets(K = K, N = 5000, mu = mu, pi_list = pi_list, n_runs = 1, scenario_name = "single_run", root_path = "data_local")
+```
+
+Load the generated data:
+```{r}
+truth <- readRDS("data_local/single_run/local_truth_1.rds")
+y_local <- truth$y
+z_local <- truth$z
+```
+## 1.1 Visualize Latent States
+
+```{r visualize-local-states}
+z_df <- as.data.frame(z_local)
+z_df <- z_df |> mutate(arm = factor(1:K)) |>
+  pivot_longer(cols = starts_with("V"), names_to = "time", values_to = "state") |>
+  mutate(time = as.numeric(gsub("V", "", time)))
+
+ggplot(z_df, aes(x = time, y = state, color = arm)) +
+  geom_line() +
+  facet_wrap(~ arm, ncol = 1) +
+  labs(title = "Latent Local States Over Time",
+       x = "Time", y = "State")
+```
+
+## 1.2 Visualize Rewards
+```{r visualize-local-rewards}
+y_df <- as.data.frame(y_local)
+y_df <- y_df |> mutate(arm = factor(1:K)) |>
+  pivot_longer(cols = starts_with("V"), names_to = "time", values_to = "reward") |>
+  mutate(time = as.numeric(gsub("V", "", time)))
+
+ggplot(y_df, aes(x = time, y = reward, color = arm)) +
+  geom_line() +
+  facet_wrap(~ arm, ncol = 1) +
+  labs(title = "Reward Streams Per Arm",
+       x = "Time", y = "Reward")
+```
+
+# 2. Single Run - Model Comparison
+
+## 2.1 Thompson Sampling
+
+### Baseline
+
+```{r}
+baseline_ts_results <- bandit_baselines("ts", K, N, y_local, z_local, mu, dynamics = "independent", batch_size = 100)
+```
+
+Store in df:
+```{r}
+baseline_ts_df <- data.frame(
+  time = seq_along(baseline_ts_results$cumulative_reward),
+  cumulative_reward = baseline_ts_results$cumulative_reward,
+  cumulative_regret = baseline_ts_results$cumulative_regret,
+  model = "Baseline TS"
+)
+```
+
+
+## 2.2 KFAS AR Thompson Sampling:
+
+
+```{r}
+res_ts_ar <- thompson_ar_kfas(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+```
+
+```{r}
+ts_ar_df <- data.frame(
+  time = seq_along(res_poor_ts$cumulative_reward),
+  cumulative_reward = res_ts_ar$cumulative_reward,
+  cumulative_regret = res_ts_ar$cumulative_regret,
+  model = "AR TS"
+)
+ts_ar_compare_df <- bind_rows(baseline_ts_df, ts_ar_df)
+```
+
+```{r}
+ggplot(ts_ar_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Reward: Baseline vs KFAS AR TS",
+       x = "Time", y = "Cumulative Reward") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(ts_ar_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Regret: Baseline vs KFAS AR TS",
+       x = "Time", y = "Cumulative Regret") +
+  theme_minimal()
+```
+## 2.3 UCB
+
+### Baseline
+
+```{r}
+baseline_ucb_results <- bandit_baselines("ucb-tuned", K, N, y_local, z_local, mu,
+                                         dynamics = "independent", batch_size = 100)
+```
+
+Store in df:
+```{r}
+baseline_ucb_df <- data.frame(
+  time = seq_along(baseline_ucb_results$cumulative_reward),
+  cumulative_reward = baseline_ucb_results$cumulative_reward,
+  cumulative_regret = baseline_ucb_results$cumulative_regret,
+  model = "Baseline UCB"
+)
+```
+
+## 2.4 KFAS AR UCB
+
+```{r}
+res_ar_ucb <- ucb_ar_kfas(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+```
+
+```{r}
+ar_ucb_df <- data.frame(
+  time = seq_along(res_ar_ucb$cumulative_reward),
+  cumulative_reward = res_ar_ucb$cumulative_reward,
+  cumulative_regret = res_ar_ucb$cumulative_regret,
+  model = "AR UCB"
+)
+ucb_ar_compare_df <- bind_rows(baseline_ucb_df, ar_ucb_df)
+
+```
+
+```{r}
+ggplot(ucb_ar_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Reward: Baseline vs KFAS AR UCB",
+       x = "Time", y = "Cumulative Reward") +
+  theme_minimal()
+```
+```{r}
+ggplot(ucb_ar_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
+  geom_line() +
+  labs(title = "Cumulative Regret: Baseline vs KFAS AR UCB",
+       x = "Time", y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+# 3. Multiple Run - Averaged Performance 
+
+## 3.1 Generate Datasets
+```{r}
+generate_local_datasets(K = K, N = N, mu = mu, pi_list = pi_list,
+                        n_runs = 25,
+                        scenario_name = "A",
+                        root_path = "data_local")
+```
+
+### KFAS TS
+
+```{r}
+library(nimble)
+ar_multi_df <- future_lapply(1:25, function(i) {
+  simulate_model_on_run(
+    run_id = i, N = N, K = K,
+    algorithm = "ts", complexity = "kfas",
+    dynamics = "independent",
+    setting = "local",
+    data_path = "data_local/A"
+  )
+}) |> bind_rows()
+```
+
+## 3.3 Summary Plot
+```{r}
+ar_summary <- ts_multi_df |> group_by(time, model) |> summarise(
+  avg_regret = mean(cumulative_regret),
+  avg_reward = mean(cumulative_reward),
+  .groups = "drop"
+)
+
+ggplot(ar_summary, aes(x = time, y = avg_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
+       x = "Time", y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+### KFAS UCB
+
+
+```{r}
+ar_ucb_multi_df <- future_lapply(1:25, function(i) {
+  simulate_model_on_run(
+    run_id = i, N = N, K = K,
+    algorithm = "ucb", complexity = "kfas",
+    dynamics = "independent",
+    setting = "local",
+    data_path = "data_local/A"
+  )
+}) |> bind_rows()
+```
+
+
+
+```{r}
+ar_summary <- ar_ucb_multi_df |> group_by(time, model) |> summarise(
+  avg_regret = mean(cumulative_regret),
+  avg_reward = mean(cumulative_reward),
+  .groups = "drop"
+)
+
+ggplot(ar_summary, aes(x = time, y = avg_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
+       x = "Time", y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+
+# Problem Setup: Global Latent State
+
+We simulate a $K$-armed bandit problem where **all arms share the same underlying latent state process** governed by a Hidden Markov Model (HMM). This represents a scenario where there's a common environment or external condition that affects the reward probability of all arms.
+
+### Loading all the Models and Functions
+
+
+---
+
 
 Transition Probability:
 ```{r}
@@ -77,7 +317,7 @@ mu <- matrix(c(0.95, 0.1,
 For only one Run:
 ```{r simulate-global-state}
 generate_global_datasets(
-  K = K,
+  K = 2,
   N = N,
   mu = mu,
   pi_global = pi_global,
@@ -184,3 +424,150 @@ ggplot(ts_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
   theme_minimal()
 ```
 
+
+## Several Runs 
+
+## 3.1 Generate Datasets
+```{r}
+generate_global_datasets(K = K, N = N, mu = mu, pi_global = pi_global,
+                        n_runs = 25,
+                        scenario_name = "A",
+                        root_path = "data_global")
+```
+
+### Baseline
+
+```{r}
+baseline_ts_results <- bandit_baselines("ts", K, N, y_global, z_global, mu, dynamics = "common", batch_size = 100)
+```
+
+Store in df:
+```{r}
+baseline_ts_df <- data.frame(
+  time = seq_along(baseline_ts_results$cumulative_reward),
+  cumulative_reward = baseline_ts_results$cumulative_reward,
+  cumulative_regret = baseline_ts_results$cumulative_regret,
+  model = "Baseline TS"
+)
+```
+
+
+```{r}
+ar_multi_df <- future_lapply(1:25, function(i) {
+  simulate_model_on_run(
+    run_id = i, N = N, K = K,
+    algorithm = "ts", complexity = "kfas",
+    dynamics = "common",
+    setting = "global",
+    data_path = "data_global/A"
+  )
+}) |> bind_rows()
+```
+
+
+
+
+```{r}
+ts_compare_df_s1 <- bind_rows(baseline_ts_df, ar_multi_df)
+```
+
+```{r}
+
+ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Cumulative Regret: Baseline vs KFAS AR(1) Thompson Sampling",
+       x = "Time",
+       y = "Cumulative Regret") +
+  theme_minimal()
+```
+
+```{r}
+ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
+  bind_rows(
+    simulate_model_on_run(
+      run_id = i, N = N, K = 2,
+      algorithm = "ts",
+      complexity = "baseline",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+      simulate_model_on_run(
+      run_id = i, N = N, K = 2,
+      algorithm = "ts",
+      complexity = "kfas",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    )
+  )
+}, future.seed = TRUE) |> bind_rows()
+```
+
+
+
+
+Comparison:
+
+
+```{r}
+ts_summary <- ts_runs_df |>
+  group_by(time, model_id) |>
+  summarise(
+    avg_regret = mean(cumulative_regret),
+    avg_reward = mean(cumulative_reward),
+    .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
+  )
+
+plot_cumulative_regret(ucb_summary) 
+```
+
+## UCB
+
+```{r}
+ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
+  bind_rows(
+    simulate_model_on_run(
+      run_id = i, N = N, K = 2,
+      algorithm = "ucb",
+      complexity = "baseline",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    ),
+      simulate_model_on_run(
+      run_id = i, N = N, K = 2,
+      algorithm = "ucb",
+      complexity = "kfas",
+      dynamics = "common",
+      data_path = "data_global/A",
+      setting = "global"
+    )
+  )
+}, future.seed = TRUE) |> bind_rows()
+```
+
+
+```{r}
+ucb_summary <- ucb_runs_df |>
+  group_by(time, model_id) |>
+  summarise(
+    avg_regret = mean(cumulative_regret),
+    avg_reward = mean(cumulative_reward),
+    .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
+  )
+
+plot_cumulative_regret(ucb_summary) 
+```
