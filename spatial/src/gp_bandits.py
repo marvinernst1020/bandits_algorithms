@@ -3,11 +3,11 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF
 
 class GaussianProcessUCB:
-    def __init__(self, arms, beta=2.0, noise=0.1):
+    def __init__(self, arms, beta=2.0, noise=0.1, length_scale=0.2):
         self.arms = np.array(arms)
         self.beta = beta
         self.noise = noise
-        self.kernel = RBF(length_scale=0.2)
+        self.kernel = RBF(length_scale)
         self.gp = GaussianProcessRegressor(kernel=self.kernel, alpha=noise**2)
         self.X = []
         self.y = []
@@ -25,10 +25,10 @@ class GaussianProcessUCB:
         self.y.append(reward)
 
 class GaussianProcessTS:
-    def __init__(self, arms, noise=0.1):
+    def __init__(self, arms, noise=0.1, length_scale=0.2):
         self.arms = np.array(arms)
         self.noise = noise
-        self.kernel = RBF(length_scale=0.2)
+        self.kernel = RBF(length_scale)
         self.gp = GaussianProcessRegressor(kernel=self.kernel, alpha=noise**2)
         self.X = []
         self.y = []

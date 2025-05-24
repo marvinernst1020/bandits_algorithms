@@ -189,3 +189,57 @@ class Zooming(Algorithm):
         """
 
         return self.pull(0)
+    
+# -------------------------------------------------------------------------
+"""
+Added by Marvin Ernst (2025)
+"""
+# As the Zooming algorithm is not a bandit algorithm, we need to wrap it in a bandit algorithm
+# to use it in the bandit setting. The wrapper will select the arm with the minimum distance to the point
+# selected by the Zooming algorithm. - for discrete arms:
+class DiscreteZoomingWrapper:
+    def __init__(self, f, arms, domain=[[0, 1], [0, 1]], nu=1, rho=0.9):
+        """
+        Wraps the continuous Zooming algorithm for use in a discrete-arm bandit setting.
+
+        Parameters
+        ----------
+        f : function
+            Ground truth reward function used for evaluation.
+        arms : np.ndarray
+            Array of shape (K, d) representing K discrete arms in d-dimensional space.
+        domain : list of list
+            The continuous domain over which Zooming is defined, default is 2D unit square.
+        nu : float
+            Smoothness parameter for the Zooming algorithm.
+        rho : float
+            Shrinking factor for spatial refinement.
+        """
+        self.arms = np.array(arms)
+        self.zoom = Zooming(nu=nu, rho=rho, domain=domain)
+        self.f = f
+
+    def select_arm(self, t):
+        """
+        Uses Zooming to propose a point and selects the nearest discrete arm.
+
+        Parameters
+        ----------
+        t : int
+            Current timestep.
+
+        Returns
+        -------
+        np.ndarray
+            The selected arm's coordinates.
+        """
+        x = self.zoom.pull(t)
+        idx = np.argmin(np.linalg.norm(self.arms - np.array(x), axis=1))
+        self.last_selected_point = x  
+        return self.arms[idx]
+
+    def get_selected_index(self):
+        return np.argmin(np.linalg.norm(self.arms - np.array(self.last_selected_point), axis=1))
+
+    def update(self, arm_idx, reward):
+        self.zoom.receive_reward(self.zoom.time, reward)
