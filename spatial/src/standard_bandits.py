@@ -32,7 +32,7 @@ class BernoulliTS:
         self.successes = np.zeros(K)
         self.failures = np.zeros(K)
 
-    def select_arm(self):
+    def select_arm(self, t=None):
         samples = np.random.beta(self.successes + 1, self.failures + 1)
         return np.argmax(samples)
 
@@ -49,8 +49,8 @@ class GaussianUCB:
         self.means = np.zeros(K)
         self.squared_sums = np.zeros(K)
 
-    def select_arm(self, t):
-        if t < self.K:
+    def select_arm(self, t=None):
+        if (t or 1) < self.K:
             return t
         ucb_values = np.zeros(self.K)
         for a in range(self.K):
@@ -58,8 +58,8 @@ class GaussianUCB:
             mu = self.means[a]
             var_hat = (self.squared_sums[a] / n - mu**2) if n > 1 else 0
             bonus = np.sqrt(
-                (np.log(t) / n) *
-                min(1/4, var_hat + np.sqrt(2 * np.log(t) / n))
+                (np.log(t or 1) / n) *
+                min(1/4, var_hat + np.sqrt(2 * np.log(t or 1) / n))
             )
             ucb_values[a] = mu + bonus
         return np.argmax(ucb_values)
@@ -79,7 +79,7 @@ class GaussianTS:
         self.counts = np.zeros(K)
         self.sum_rewards = np.zeros(K)
 
-    def select_arm(self):
+    def select_arm(self, t=None):
         samples = np.random.normal(self.prior_means, np.sqrt(self.prior_vars))
         return np.argmax(samples)
 

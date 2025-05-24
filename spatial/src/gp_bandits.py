@@ -12,7 +12,7 @@ class GaussianProcessUCB:
         self.X = []
         self.y = []
 
-    def select_arm(self):
+    def select_arm(self, t=None):
         if not self.X:
             return np.random.choice(len(self.arms))
         self.gp.fit(np.array(self.X), np.array(self.y))
@@ -33,7 +33,7 @@ class GaussianProcessTS:
         self.X = []
         self.y = []
 
-    def select_arm(self):
+    def select_arm(self, t=None):
         if not self.X:
             return np.random.choice(len(self.arms))
         self.gp.fit(np.array(self.X), np.array(self.y))

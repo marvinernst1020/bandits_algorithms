@@ -1,15 +1,15 @@
-from PyXAB.algos.Zooming import Zooming
+import numpy as np
+from .zooming import Zooming
 from PyXAB.partition.BinaryPartition import BinaryPartition
-from PyXAB.synthetic_obj.SyntheticObj import SyntheticObj
 
-class CustomObjective(SyntheticObj):
+class CustomObjective:
     def __init__(self, f):
         self.f = f
 
     def evaluate(self, x):
-        return self.f(np.array(x))
+        return float(self.f(np.array(x)))
 
-def get_zoomin_algorithm(f, domain):
+def get_zoomin_algorithm(f, domain, rounds=1000):
     objective = CustomObjective(f)
-    algo = Zooming(rounds=1000, domain=domain, partition=BinaryPartition(domain))
+    algo = Zooming(domain=domain, partition=BinaryPartition)
     return algo, objective
