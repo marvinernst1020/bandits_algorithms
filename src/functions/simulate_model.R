@@ -1,93 +1,106 @@
-simulate_model_on_run <- function(run_id,                 # unchanged
-                                  N  = NULL,              # now optional
-                                  K  = NULL,
-                                  algorithm  = c("ts","ucb"),
-                                  complexity = c("advanced","poor",
-                                                 "baseline","ar","kfas"),
-                                  dynamics   = c("common","independent"),
-                                  data_path  = c("data_global/A","data_local/A"),
-                                  setting    = c("global","local"))
-{
-  algorithm  <- match.arg(algorithm)
+#' Simulate a bandit model run for a given dataset
+#'
+#' @param run_id Numeric ID for the dataset file (e.g., 1 loads "..._1.rds")
+#' @param N Number of time steps to simulate
+#' @param K Number of arms
+#' @param algorithm Algorithm to use: "ts" or "ucb"
+#' @param complexity "advanced", "poor", or "baseline"
+#' @param dynamics "common" or "independent"
+#' @param data_path Folder where the dataset is stored
+#' @param model_paths Named list with model file paths
+#' @param setting "global" or "local" (controls filename prefix)
+#'
+#' @return A tibble with results from the model run
+
+simulate_model_on_run <- function(run_id, N, K,
+                                  algorithm = c("ts", "ucb"),
+                                  complexity = c("advanced", "poor", "baseline","kfas"),
+                                  dynamics = c("common", "independent"),
+                                  data_path = "data_global/A",
+                                  setting = c("global", "local")) {
+  
+  algorithm <- match.arg(algorithm)
   complexity <- match.arg(complexity)
-  dynamics   <- match.arg(dynamics)
-  setting    <- match.arg(setting)
-
-  # -------------------------------------------------------------------
+  dynamics <- match.arg(dynamics)
+  setting <- match.arg(setting)
+  
+  message(glue::glue("[{Sys.time()}] Starting run {run_id}: {toupper(setting)} / {algorithm} / {complexity} / {dynamics}"))
+  
+  # Automatically set file prefix based on setting
   file_prefix <- if (setting == "global") "global_truth_" else "local_truth_"
-  file_path   <- file.path(data_path, paste0(file_prefix, run_id, ".rds"))
-  data        <- readRDS(file_path)
-
-  ## Always recompute K & N from the file -----------------------------
-  if (is.null(K)) K <- nrow(data$y)           # works for both global/local
-  if (is.null(N)) N <- ncol(data$y)
-
-  message(glue::glue(
-    "[{Sys.time()}] Run {run_id}: {toupper(setting)} | {algorithm} |",
-    " {complexity} | {dynamics} | K={K}, N={N}"
-  ))
-
-  # -------------------------------------------------------------------
+  file_path <- file.path(data_path, paste0(file_prefix, run_id, ".rds"))
+  data <- readRDS(file_path)
+  
+  # Run specified model
   if (algorithm == "ts") {
     if (complexity == "advanced") {
-      res   <- thompson_advanced(K,N,data$mu,data$y,data$z,
-                                 100, 1000, 200, dynamics)
+      res <- thompson_advanced(K, N, data$mu, data$y, data$z,
+                               batch_size = 100, burn = 1000, n_iter = 200,
+                               dynamics = dynamics)
       model <- "M2 TS"
-
-    } else if (complexity == "poor") {
-      res   <- thompson_poor(K,N,data$mu,data$y,data$z,
-                             100, 1000, 200, dynamics)
+    } else if (complexity == "advanced_batching") {
+      res <- thompson_advanced_real_batching(K, N, data$mu, data$y, data$z,
+                                             batch_size = 100, burn = 1000, n_iter = 200,
+                                             dynamics = dynamics)
       model <- "M1 TS"
-
+    } else if (complexity == "poor") {
+      res <- thompson_poor(K, N, data$mu, data$y, data$z,
+                           batch_size = 100, burn = 1000, n_iter = 200,
+                           dynamics = dynamics)
+      model <- "M1 TS"
     } else if (complexity == "baseline") {
-      res   <- bandit_baselines("ts",K,N,data$y,data$z,data$mu,
-                                dynamics, batch_size = 1)
+      res <- bandit_baselines("ts", K, N, data$y, data$z, data$mu,
+                              dynamics = dynamics, batch_size = 1)
       model <- "M0 TS"
-
-    } else if (complexity == "ar") {
+    }else if (complexity == "ar") {
       res   <- thompson_ar(K,N,data$mu,data$y,data$z,
                            100, 1000, 200, dynamics)
       model <- "AR TS"
-
+      
     } else if (complexity == "kfas") {
       res   <- thompson_ar_kfas(K,N,data$mu,data$y,data$z,
                                 100, 1000, 200, dynamics)
       model <- "KFAS TS"
     }
-
   } else if (algorithm == "ucb") {
     if (complexity == "advanced") {
-      res   <- ucb_advanced(K,N,data$mu,data$y,data$z,
-                            100, 1000, 200, dynamics)
+      res <- ucb_advanced(K, N, data$mu, data$y, data$z,
+                          batch_size = 100, burn = 1000, n_iter = 200,
+                          dynamics = dynamics)
       model <- "M2 UCB"
-
     } else if (complexity == "poor") {
-      res   <- ucb_poor(K,N,data$mu,data$y,data$z,
-                        100, 1000, 200, dynamics)
+      res <- ucb_poor(K, N, data$mu, data$y, data$z,
+                      batch_size = 100, burn = 1000, n_iter = 200,
+                      dynamics = dynamics)
       model <- "M1 UCB"
-
     } else if (complexity == "baseline") {
-      res   <- bandit_baselines("ucb-tuned",K,N,data$y,data$z,data$mu,
-                                dynamics, batch_size = 1)
+      res <- bandit_baselines("ucb-tuned", K, N, data$y, data$z, data$mu,
+                              dynamics = dynamics, batch_size = 1)
       model <- "M0 UCB"
-
-    } else if (complexity == "ar") {
+    }else if (complexity == "ar") {
       res   <- ucb_ar(K,N,data$mu,data$y,data$z,
                       100, 500, 100, dynamics)
       model <- "AR UCB"
-
+      
     } else if (complexity == "kfas") {
       res   <- ucb_ar_kfas(K,N,data$mu,data$y,data$z,
                            100, 500, 100, dynamics)
       model <- "KFAS UCB"
     }
+  } else {
+    stop("Unsupported algorithm")
   }
-
+  
+  #model_id <- paste(model, dynamics)
+  model_id <- model
+  
   tibble(
-    time              = 1:N,
+    time = 1:N,
     cumulative_reward = res$cumulative_reward,
     cumulative_regret = res$cumulative_regret,
-    run               = run_id,
-    model             = model
+    run = run_id,
+    model = model,
+    model_id = model_id
   )
 }
+

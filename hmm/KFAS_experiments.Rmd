@@ -207,7 +207,7 @@ ggplot(ucb_ar_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
 ```{r}
 ggplot(ucb_ar_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
   geom_line() +
-  labs(title = "Cumulative Regret: Baseline vs AR UCB",
+  labs(title = "Cumulative Regret: Baseline vs KFAS AR UCB",
        x = "Time", y = "Cumulative Regret") +
   theme_minimal()
 ```
@@ -245,7 +245,7 @@ ar_summary <- ts_multi_df |> group_by(time, model) |> summarise(
   .groups = "drop"
 )
 
-ggplot(ts_summary, aes(x = time, y = avg_regret, color = model)) +
+ggplot(ar_summary, aes(x = time, y = avg_regret, color = model)) +
   geom_line(size = 1) +
   labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
        x = "Time", y = "Cumulative Regret") +
@@ -253,19 +253,6 @@ ggplot(ts_summary, aes(x = time, y = avg_regret, color = model)) +
 ```
 
 ### KFAS UCB
-
-```{r}
-system.time(
-  simulate_model_on_run(
-    run_id     = 1,
-    algorithm  = "ts",
-    complexity = "kfas",
-    dynamics   = "independent",
-    setting    = "local",
-    data_path  = "data_local/A"
-  )
-)
-```
 
 
 ```{r}
@@ -279,6 +266,9 @@ ar_ucb_multi_df <- future_lapply(1:25, function(i) {
   )
 }) |> bind_rows()
 ```
+
+
+
 ```{r}
 ar_summary <- ar_ucb_multi_df |> group_by(time, model) |> summarise(
   avg_regret = mean(cumulative_regret),
@@ -286,7 +276,7 @@ ar_summary <- ar_ucb_multi_df |> group_by(time, model) |> summarise(
   .groups = "drop"
 )
 
-ggplot(ts_summary, aes(x = time, y = avg_regret, color = model)) +
+ggplot(ar_summary, aes(x = time, y = avg_regret, color = model)) +
   geom_line(size = 1) +
   labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
        x = "Time", y = "Cumulative Regret") +
@@ -473,6 +463,10 @@ ar_multi_df <- future_lapply(1:25, function(i) {
   )
 }) |> bind_rows()
 ```
+
+
+
+
 ```{r}
 ts_compare_df_s1 <- bind_rows(baseline_ts_df, ar_multi_df)
 ```
@@ -509,28 +503,30 @@ ts_runs_df <- future_lapply(seq_len(n_runs), function(i) {
   )
 }, future.seed = TRUE) |> bind_rows()
 ```
-```{r}
-ts_summary
-```
+
+
+
+
+Comparison:
+
 
 ```{r}
-ts_summary <- ts_runs_df |>  group_by(time, model) |>
+ts_summary <- ts_runs_df |>
+  group_by(time, model_id) |>
   summarise(
     avg_regret = mean(cumulative_regret),
     avg_reward = mean(cumulative_reward),
     .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
   )
 
+plot_cumulative_regret(ucb_summary) 
 ```
-
-Comparison:
-```{r}
-plot_df <- ts_summary |>
-  dplyr::rename(model_id = model)  
-
-plot_cumulative_regret(plot_df, title = "Average regret")
-```
-
 
 ## UCB
 
@@ -557,20 +553,21 @@ ucb_runs_df <- future_lapply(seq_len(n_runs), function(i) {
 }, future.seed = TRUE) |> bind_rows()
 ```
 
+
 ```{r}
-ucb_summary <- ucb_runs_df |>  group_by(time, model) |>
+ucb_summary <- ucb_runs_df |>
+  group_by(time, model_id) |>
   summarise(
     avg_regret = mean(cumulative_regret),
     avg_reward = mean(cumulative_reward),
     .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
   )
 
-```
-
-Comparison:
-```{r}
-plot_df <- ucb_summary |>
-  dplyr::rename(model_id = model)  
-
-plot_cumulative_regret(plot_df, title = "Average regret")
+plot_cumulative_regret(ucb_summary) 
 ```
