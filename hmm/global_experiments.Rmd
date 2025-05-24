@@ -528,9 +528,57 @@ ggsave(file.path(output_dir, "ucb_cumulative_regret.png"), plot = plots$cumulati
 ggsave(file.path(output_dir, "ucb_instantaneous_regret.png"), plot = plots$instantaneous, width = 8, height = 6, dpi = 300)
 ```
 
+```{r}
+ts_runs_df <- simulate_model_on_run(
+  run_id     = 1,
+  N          = N,
+  K          = K,
+  algorithm  = "ts",
+  complexity = "kfas",
+  dynamics   = "common",
+  data_path  = "data_global/A",
+  setting    = "global"
+)
+```
 
 
+```{r}
+ts_runs_df_ar <- future_lapply(seq_len(n_runs), function(i) {
+
+  simulate_model_on_run(
+    run_id     = i,
+    N          = N,
+    K          = K,
+    algorithm  = "ts",
+    complexity = "kfas",   
+    dynamics   = "common",
+    data_path  = "data_global/A",
+    setting    = "global"
+  )
+
+}, future.seed = TRUE) |> 
+  bind_rows()
+```
 
 
+```{r}
+ts_summary_ar <- ts_runs_df_ar |>
+  group_by(time, model_id) |>
+  summarise(
+    avg_regret = mean(cumulative_regret),
+    avg_reward = mean(cumulative_reward),
+    .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
+  )
+```
+
+```{r}
+plot_cumulative_regret(ts_summary_ar) 
+```
 
 

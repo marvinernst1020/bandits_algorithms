@@ -16,6 +16,15 @@ library(future.apply)
 plan(multisession)
 ```
 
+```{r}
+output_dir <- "local_plots"
+
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+```
+
+
 # Problem Setup: Local Latent State
 
 We simulate a \$K\$-armed bandit problem where **each arm has its own independent latent state process**, governed by separate Hidden Markov Models (HMMs). This setup reflects settings where arms evolve independently in time.
@@ -51,25 +60,26 @@ Transition Probabilities (one per arm):
 
 ```{r}
 pi_list <- list(
-  matrix(c(0.997, 0.003,
-           0.003, 0.997), nrow = 2, byrow = TRUE),  
-  matrix(c(0.997, 0.003,
-           0.003, 0.997), nrow = 2, byrow = TRUE)  
+  matrix(c(0.999, 0.001,
+           0.001, 0.999), nrow = 2, byrow = TRUE),  
+  matrix(c(0.999, 0.001,
+           0.001, 0.999),, nrow = 2, byrow = TRUE)  
 )
 ```
 
 Reward Probabilities:
 
 ```{r}
-mu <- matrix(c(
-  0.95, 0.1,  #
-  0.5,  0.7   
-), nrow = K, byrow = TRUE)
+mu <- matrix(c(0.95, 0.1,
+               0.1, 0.95), nrow = K, byrow = TRUE)
 ```
 
 ---
 
 # 1. Generating Ground Truth Data for Local States
+
+
+## 1.1 Simulate Ground Truth
 
 Generate and save a single local dataset:
 
@@ -85,7 +95,7 @@ y_local <- truth$y
 z_local <- truth$z
 ```
 
-## 1.1 Visualize Latent States
+## 1.2 Visualize Latent States
 
 ```{r visualize-local-states}
 z_df <- as.data.frame(z_local)
@@ -100,7 +110,7 @@ ggplot(z_df, aes(x = time, y = state, color = arm)) +
        x = "Time", y = "State")
 ```
 
-## 1.2 Visualize Rewards
+## 1.3 Visualize Rewards per Arm
 ```{r visualize-local-rewards}
 y_df <- as.data.frame(y_local)
 y_df <- y_df |> mutate(arm = factor(1:K)) |>
@@ -160,26 +170,30 @@ ts_compare_df <- bind_rows(baseline_ts_df, poor_ts_df)
 
 ### Cumulative Reward:
 ```{r}
-ggplot(ts_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
+plotts<-ggplot(ts_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
   geom_line() +
   labs(title = "Cumulative Reward: Baseline vs poor TS",
        x = "Time", y = "Cumulative Reward") +
   theme_minimal()
+
+ggsave(file.path(output_dir, "poor_ts_cumulative_reward_single.png"), plot = plotts, width = 8, height = 6, dpi = 300)
 ```
 
 ### Plot Regret:
 ```{r}
-ggplot(ts_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
+plotts<-ggplot(ts_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
   geom_line() +
   labs(title = "Cumulative Regret: Baseline vs poor TS",
        x = "Time", y = "Cumulative Regret") +
   theme_minimal()
+
+ggsave(file.path(output_dir, "poor_ts_cumulative_regret_single.png"), plot = plotts, width = 8, height = 6, dpi = 300)
 ```
 ## 2.2 AR Thompson Sampling:
 
 
 ```{r}
-res_ts_ar <- thompson_ar(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+res_ts_ar <- thompson_ar_kfas(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
 ```
 
 ```{r}
@@ -213,7 +227,7 @@ ggplot(ts_ar_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
 ### Baseline
 
 ```{r}
-baseline_ucb_results <- bandit_baselines("ucb-tuned", K, N, y_local, z_local, theta,
+baseline_ucb_results <- bandit_baselines("ucb-tuned", K, N, y_local, z_local, mu,
                                          dynamics = "independent", batch_size = 100)
 ```
 
@@ -227,7 +241,7 @@ baseline_ucb_df <- data.frame(
 )
 ```
 
-### poor
+### Poor UCB
 ```{r}
 res_poor_ucb <- ucb_poor(K, N, mu, y_local, z_local, batch_size = 100,
                             burn = 500, n_iter = 100, dynamics = "independent")
@@ -255,21 +269,39 @@ ggplot(ucb_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
   labs(title = "Cumulative Reward: Baseline vs poor UCB",
        x = "Time", y = "Cumulative Reward") +
   theme_minimal()
+
+
 ```
 
 ### Cumulative Regret:
 ```{r}
-ggplot(ucb_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
+plotucb<-ggplot(ucb_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
   geom_line() +
   labs(title = "Cumulative Regret: Baseline vs poor UCB",
        x = "Time", y = "Cumulative Regret") +
   theme_minimal()
+ggsave(file.path(output_dir, "poor_ucb_cumulative_regret_single.png"), plot = plotucb, width = 8, height = 6, dpi = 300)
 ```
+
+```{r}
+ucb_compare_df <- ucb_compare_df %>%
+  group_by(model) %>%
+  arrange(time) %>%
+  mutate(inst_regret= c(0, diff(cumulative_regret)))
+
+ggplot(ucb_compare_df_s1, aes(x = time, y = inst_regret, color = model)) +
+  geom_line(size = 1) +
+  labs(title = "Instantaneous Regret: Baseline vs Advanced UCB",
+       x = "Time",
+       y = "Instantaneous Regret") +
+  theme_minimal()
+```
+
 
 ## 2.4 AR UCB
 
 ```{r}
-res_ar_ucb <- ucb_ar(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
+res_ar_ucb <- ucb_ar_kfas(K, N, mu, y_local, z_local, batch_size = 100, burn = 500, n_iter = 100, dynamics = "independent")
 ```
 
 ```{r}
@@ -289,20 +321,25 @@ ggplot(ucb_ar_compare_df, aes(x = time, y = cumulative_reward, color = model)) +
   labs(title = "Cumulative Reward: Baseline vs AR UCB",
        x = "Time", y = "Cumulative Reward") +
   theme_minimal()
+
 ```
 
 ```{r}
-ggplot(ucb_ar_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
+plt<- ggplot(ucb_ar_compare_df, aes(x = time, y = cumulative_regret, color = model)) +
   geom_line() +
   labs(title = "Cumulative Regret: Baseline vs AR UCB",
        x = "Time", y = "Cumulative Regret") +
   theme_minimal()
+
+ggsave(file.path(output_dir, "ar_ucb_cumulative_regret_single.png"), plot = plt, width = 8, height = 6, dpi = 300)
 ```
 
 
 # 3. Multiple Run - Averaged Performance 
 
-## 3.1 Generate Datasets
+#### DONT FORGET TO CHANGE NR OF RUNS IN PARALLELIZATION FUNCTION
+
+## 3.1 Generate Datasets (for 25 runs)
 ```{r}
 generate_local_datasets(K = K, N = N, mu = mu, pi_list = pi_list,
                         n_runs = 25,
@@ -312,128 +349,138 @@ generate_local_datasets(K = K, N = N, mu = mu, pi_list = pi_list,
 
 ## 3.2 Parallel Runs
 
+### 3.2.1 TS
+
+
 ## issues cuz function is not defined like this.
 
-
-
-
 ```{r}
-ts_multi_df <- future_lapply(1:25, function(i) {
-  simulate_model_on_run(
-    run_id = i, N = N, K = K,
-    algorithm = "ts", complexity = "poor",
-    dynamics = "independent",
-    setting = "local",
-    data_path = "data_local/A"
+ts_runs_df <- future_lapply(1:1, function(i) {
+  bind_rows(
+    simulate_model_on_run(
+      run_id = i, N = N, K = K,
+      algorithm = "ts",
+      complexity = "baseline",
+      dynamics = "independent",
+      data_path = "data_local/A",
+      setting = "local"
+    ),
+      simulate_model_on_run(
+      run_id = i, N = N, K = K,
+      algorithm = "ts",
+      complexity = "poor",
+      dynamics = "independent",
+      data_path = "data_local/A",
+      setting = "local"
+    ),
+    simulate_model_on_run(
+      run_id = i, N = N, K = K,
+      algorithm = "ts",
+      complexity = "advanced",
+      dynamics = "independent",
+      data_path = "data_local/A",
+      setting = "local"
+    ),
+    simulate_model_on_run(
+      run_id=i, N=N, K=K,
+      algorithm="ts", complexity="kfas",  
+      dynamics="independent",
+      data_path="data_local/A", setting="local")
   )
-}) |> bind_rows()
+}, future.seed = TRUE) |> bind_rows()
 ```
+
+
 
 ## 3.3 Summary Plot
-```{r}
-ts_summary <- ts_multi_df |> group_by(time, model) |> summarise(
-  avg_regret = mean(cumulative_regret),
-  avg_reward = mean(cumulative_reward),
-  .groups = "drop"
-)
-
-ggplot(ts_summary, aes(x = time, y = avg_regret, color = model)) +
-  geom_line(size = 1) +
-  labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
-       x = "Time", y = "Cumulative Regret") +
-  theme_minimal()
-```
 
 ```{r}
-ucb_multi_df <- future_lapply(1:25, function(i) {
-  simulate_model_on_run(
-    run_id = i, N = N, K = K,
-    algorithm = "ucb", complexity = "poor",
-    dynamics = "independent",
-    setting = "local",
-    data_path = "data_local/A"
+ts_summary <- ts_runs_df |>
+  group_by(time, model_id) |>
+  summarise(
+    avg_regret = mean(cumulative_regret),
+    avg_reward = mean(cumulative_reward),
+    .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
   )
-}) |> bind_rows()
-```
 
-
-```{r}
-ucb_summary <- ucb_multi_df |> group_by(time, model) |> summarise(
-  avg_regret = mean(cumulative_regret),
-  avg_reward = mean(cumulative_reward),
-  .groups = "drop"
-)
-
-ggplot(ucb_summary, aes(x = time, y = avg_regret, color = model)) +
+ggplot(ts_summary, aes(x = time, y = avg_regret, color = model_id)) +
   geom_line(size = 1) +
   labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
        x = "Time", y = "Cumulative Regret") +
   theme_minimal()
+
+```
+```{r}
+plots<-plot_cumulative_regret(ts_summary) 
+
+ggsave(file.path(output_dir, "ts_runs_cumulative_regret.png"), plot = plots$cumulative, width = 8, height = 6, dpi = 300)
+ggsave(file.path(output_dir, "ts_runs_instantaneous_regret.png"), plot = plots$instantaneous, width = 8, height = 6, dpi = 300)
 ```
 
-
+### 3.2.2 UCB
 ```{r}
-ar_multi_df <- future_lapply(1:25, function(i) {
-  simulate_model_on_run(
-    run_id = i, N = N, K = K,
-    algorithm = "ts", complexity = "ar",
-    dynamics = "independent",
-    setting = "local",
-    data_path = "data_local/A"
+ucb_runs_df <- future_lapply(1:1, function(i) {
+  bind_rows(
+    simulate_model_on_run(
+      run_id = i, N = N, K = K,
+      algorithm = "ucb",
+      complexity = "baseline",
+      dynamics = "independent",
+      data_path = "data_local/A",
+      setting = "local"
+    ),
+      simulate_model_on_run(
+      run_id = i, N = N, K = K,
+      algorithm = "ucb",
+      complexity = "poor",
+      dynamics = "independent",
+      data_path = "data_local/A",
+      setting = "local"
+    ),
+    simulate_model_on_run(
+      run_id = i, N = N, K = K,
+      algorithm = "ucb",
+      complexity = "advanced",
+      dynamics = "independent",
+      data_path = "data_local/A",
+      setting = "local"
+    ),
+    simulate_model_on_run(
+      run_id=i, N=N, K=K,
+      algorithm="ucb", complexity="kfas",  
+      dynamics="independent",
+      data_path="data_local/A", setting="local")
   )
-}) |> bind_rows()
-```
-
-
-```{r}
-ar_ts_summary <- ar_multi_df |> group_by(time, model) |> summarise(
-  avg_regret = mean(cumulative_regret),
-  avg_reward = mean(cumulative_reward),
-  .groups = "drop"
-)
-
-ggplot(ar_ts_summary, aes(x = time, y = avg_regret, color = model)) +
-  geom_line(size = 1) +
-  labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
-       x = "Time", y = "Cumulative Regret") +
-  theme_minimal()
+}, future.seed = TRUE) |> bind_rows()
 ```
 ```{r}
-ar_ucb_multi_df <- future_lapply(1:25, function(i) {
-  simulate_model_on_run(
-    run_id = i, N = N, K = K,
-    algorithm = "ucb", complexity = "ar",
-    dynamics = "independent",
-    setting = "local",
-    data_path = "data_local/A"
+ucb_summary <- ucb_runs_df |>
+  group_by(time, model_id) |>
+  summarise(
+    avg_regret = mean(cumulative_regret),
+    avg_reward = mean(cumulative_reward),
+    .groups = "drop"
+  ) |>
+  arrange(model_id, time) |>
+  group_by(model_id) |>
+  mutate(
+    inst_regret = avg_regret - lag(avg_regret),
+    inst_regret = if_else(is.na(inst_regret), 0, inst_regret)
   )
-}) |> bind_rows()
 ```
+
 
 ```{r}
-ar_ucb_summary <- ar_ucb_multi_df |> group_by(time, model) |> summarise(
-  avg_regret = mean(cumulative_regret),
-  avg_reward = mean(cumulative_reward),
-  .groups = "drop"
-)
+plot_cumulative_regret(ucb_summary) 
 
-ggplot(ar_ucb_summary, aes(x = time, y = avg_regret, color = model)) +
-  geom_line(size = 1) +
-  labs(title = "Average Cumulative Regret over 25 Runs (Local State)",
-       x = "Time", y = "Cumulative Regret") +
-  theme_minimal()
+plots<-plot_cumulative_regret(ucb_summary) 
+
+ggsave(file.path(output_dir, "ucb_runs_cumulative_regret.png"), plot = plots$cumulative, width = 8, height = 6, dpi = 300)
+ggsave(file.path(output_dir, "ucb_runs_instantaneous_regret.png"), plot = plots$instantaneous, width = 8, height = 6, dpi = 300)
 ```
-
-```{r}
-combined_df <- bind_rows(ar_ts_summary, ucb_summary, ts_summary, ar_ucb_summary)
-
-# Plot
-ggplot(combined_df, aes(x = time, y = avg_regret, color = model)) +
-  geom_line(size = 1) +
-  labs(
-    title = "Average Cumulative Regret over 25 Runs (Local State)",
-    x = "Time", y = "Cumulative Regret", color = "Model"
-  ) +
-  theme_minimal()
-```
-
