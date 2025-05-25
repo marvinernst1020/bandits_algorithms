@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
-
+from scipy.special import expit, logit
 import seaborn as sns
 import pandas as pd
 
@@ -19,17 +19,59 @@ def plot_cumulative_regret(df, palette=None):
     sns.lineplot(data=df, x="time", y="avg_regret", hue="algorithm", palette=palette)
     plt.xlabel("Time Step")
     plt.ylabel("Average Cumulative Regret")
-    plt.legend(title=None, loc="lower right")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15), 
+        ncol=len(df["algorithm"].unique()),  
+        frameon=False
+    )
     plt.tight_layout()
     plt.show()
 
+def plot_cumulative_regret_logit(df, palette=None):
+    plt.figure(figsize=(8, 5))
+
+    # Normalize regret to (0, 1)
+    df = df.copy()
+    max_regret = df["avg_regret"].max()
+    epsilon = 1e-5  # avoid logit(0) or logit(1)
+    df["regret_scaled"] = df["avg_regret"].clip(epsilon, max_regret - epsilon) / max_regret
+    df["regret_logit"] = logit(df["regret_scaled"])
+
+    sns.lineplot(data=df, x="time", y="regret_logit", hue="algorithm", palette=palette)
+    plt.xlabel("Time Step")
+    plt.ylabel("Logit-Scaled Cumulative Regret")
+
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15), 
+        ncol=len(df["algorithm"].unique()),  
+        frameon=False
+    )
+    plt.tight_layout()
+    plt.show()
 
 def plot_instantaneous_regret(df, palette=None):
     plt.figure(figsize=(8, 5))
-    sns.lineplot(data=df, x="time", y="avg_inst_regret", hue="algorithm", palette=palette)    
+    sns.lineplot(
+        data=df,
+        x="time",
+        y="avg_inst_regret",
+        hue="algorithm",
+        palette=palette,
+        alpha=0.7  
+    )
     plt.xlabel("Time Step")
     plt.ylabel("Average Instantaneous Regret")
-    plt.legend(title=None, loc="upper right")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15),
+        ncol=len(df["algorithm"].unique()),
+        frameon=False
+    )
     plt.tight_layout()
     plt.show()
 

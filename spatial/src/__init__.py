@@ -27,6 +27,7 @@ from .zoomin_bandit import get_zoomin_algorithm
 from .utils import (
     plot_rewards,
     plot_cumulative_regret,
+    plot_cumulative_regret_logit,
     plot_instantaneous_regret,
     ensure_scalar, 
     plot_arm_positions

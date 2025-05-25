@@ -22,6 +22,7 @@ class point:
 
     def __init__(self, p):
         self.p = p
+        self.locked_in_step = None # added by Marvin Ernst (2025)
 
     def get_point(self):
         return self.p
@@ -150,6 +151,17 @@ class Zooming(Algorithm):
             np.sqrt(8 * self.phase / (2 + self.pulled_times[self.best_arm]))
             <= self.nu * self.rho ** parent.get_depth()
         ):
+            # ----------------------------
+            # Added by Marvin Ernst (2025)
+            # Record the first time the algorithm "locks in"
+            # Only allow lock-in if at least depth 2 and the arm has been pulled a few times
+            if (
+                not hasattr(self, "locked_in_step")
+                and parent.get_depth() >= 2
+                and self.pulled_times[self.best_arm] >= 5
+            ):
+                self.locked_in_step = self.time
+            # ----------------------------
             if parent.get_depth() >= self.partition.get_depth():
                 self.partition.make_children(parent=parent, newlayer=True)
             else:
