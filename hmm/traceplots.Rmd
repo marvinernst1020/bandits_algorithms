@@ -47,15 +47,15 @@ N <- 10000
 
 Transition Probability:
 ```{r}
-pi_global <- matrix(c(0.9, 0.1,
-                     0.1, 0.9),
+pi_global <- matrix(c(0.999, 0.001,
+                     0.001, 0.999),
                      nrow = 2, byrow = TRUE)  
 ```
 
 Probability of Reward:
 ```{r}
-mu <- matrix(c(0.1, 0.95,
-               0.95, 0.1),
+mu <- matrix(c(0.95, 0.1,
+               0.1, 0.95),
                 nrow = K, byrow = TRUE)
 ```
 
@@ -99,8 +99,8 @@ z_global <- truth$z
   y_true <- y_global
   dynamics<-'common'
   batch_size <- 100
-  burn = 500
-  n_iter = 100
+  burn = 1000
+  n_iter = 200
   
   data_track <-list()
   
@@ -181,192 +181,198 @@ z_global <- truth$z
     regret[t] <- mu_selected[oracle_arm[t], t] - mu[selected_arms[t], true_z + 1]
   }
 ```
-
 ```{r}
-library(rjags)
-library(coda)
-library(ggmcmc)
-library(dplyr)
-library(ggplot2)
 
-# Parameters
-param_names <- c("mu", "pi")
+means_df <- gg_data_combined %>%
+  mutate(run = as.integer(gsub("Dataset ", "", dataset))) %>%
+  group_by(run, Parameter) %>%
+  summarise(mean_value = mean(value), .groups = "drop")
 
-# Result list for ggmcmc
-gg_data_all <- list()
+ggplot(means_df, aes(x = run, y = mean_value)) +
+  geom_line(alpha = 0.7, size = 0.9, color = 'black') +
+  facet_wrap(~ Parameter, scales = "free_y") +
+  labs(
+    title = "Posterior Means of Parameters Across Runs",
+    x     = "Run (batch index)",
+    y     = "Posterior Mean"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "none"
+  )
 
-# Loop through data_track list
-for (i in seq_along(data_track)) {
-  cat("Running model for dataset", i, "\n")
-  
-  model <- jags.model(model_path, data = data_track[[i]], n.chains = 1, quiet = TRUE)
-  update(model, burn)
-  
-  post <- coda.samples(model, variable.names = param_names, n.iter = n_iter)
-  
-  # Convert to ggmcmc data frame and tag with dataset id
-  gg_data <- ggs(post)
-  gg_data$dataset <- paste0("Dataset ", i)
-  gg_data_all[[i]] <- gg_data
-}
-
-# Combine all datasets
-gg_data_combined <- bind_rows(gg_data_all)
-
-# Plot traceplots with faceting by parameter and coloring by dataset
-ggplot(gg_data_combined, aes(x = Iteration, y = value, color = dataset)) +
-  geom_line(alpha = 0.7) +
-  facet_wrap(~Parameter, scales = "free_y") +
-  theme_minimal() +
-  labs(title = "Traceplots by Parameter Across Datasets",
-       y = "Parameter Value", x = "Iteration")
-
+#pis here look good but not the mus
 ```
 ```{r}
-ggplot(gg_data_all[[i]], aes(x = Iteration, y = value, color = dataset)) +
-  geom_line(alpha = 0.7) +
+# the issue above was that mus are getting mixed up to i set the lower ones together and the high ones together
+tidy_means <- means_df %>%
+  filter(str_detect(Parameter, "^mu")) %>%
+  extract(Parameter,
+          into = c("what","arm","state"),
+          regex = "(mu)\\[(\\d+),(\\d+)\\]") %>%
+  mutate(across(c(arm, state), as.integer))  
+
+relabeled <- tidy_means %>%
+  group_by(run, arm) %>%
+  arrange(mean_value) %>%
+  mutate(rel_state = row_number()) %>%
+  ungroup() %>%
+  mutate(newParam = paste0("mu[", arm, ",", rel_state, "]"))
+
+plot_df <- relabeled %>%
+  select(run, Parameter = newParam, mean_value)
+
+ggplot(plot_df, aes(x = run, y = mean_value)) +
+  geom_line(alpha = 0.7, size = 0.9, color = 'black') +
+  facet_wrap(~ Parameter, scales = "free_y") +
+  labs(
+    title = "Posterior Means of Parameters Across Runs\n(label-switched corrected)",
+    x     = "Run (batch index)",
+    y     = "Posterior Mean"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+ggplot(gg_data_all[[length(gg_data_all)]], aes(x = Iteration, y = value)) +
+  geom_line(alpha = 0.7, size = 0.9, color = 'black') +
   facet_wrap(~Parameter, scales = "free_y") +
-  theme_minimal() +
-  labs(title = "Traceplots on last Run",
-       y = "Parameter Value", x = "Iteration")
+  labs(
+    title = "Parameter Traceplots after JAGGS run with 10000 samples",
+    x = "Sample",
+    y = "Parameter Value"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "none"
+  )
+
+```
+# The Local Setup
+
+Transition Probabilities (one per arm):
+
+```{r}
+pi_list <- list(
+  matrix(c(0.999, 0.001,
+           0.001, 0.999), nrow = 2, byrow = TRUE),  
+  matrix(c(0.999, 0.001,
+           0.001, 0.999),, nrow = 2, byrow = TRUE)  
+)
+```
+
+Reward Probabilities:
+
+```{r}
+mu <- matrix(c(0.95, 0.1,
+               0.1, 0.95), nrow = K, byrow = TRUE)
+```
+
+---
+
+## Simulate Ground Truth
+
+Generate and save a single local dataset:
+
+```{r}
+generate_local_datasets(K = K, N = N, mu = mu, pi_list = pi_list, n_runs = 1, scenario_name = "single_run", root_path = "data_local")
+```
+
+Load the generated data:
+```{r}
+truth <- readRDS("data_local/single_run/local_truth_1.rds")
+y_local <- truth$y
+z_local <- truth$z
 ```
 
 ```{r cars}
+  N<- 5000
 
-  model_path <- advanced_model_cheat_path
+  model_path <- poor_model_path
   
-  observed_rewards <- list()
-  selected_arms <- numeric(N)
-  received_rewards <- numeric(N)
-  regret <- numeric(N)
-  post_matrix <- NULL
+  selected_arms   <- integer(N)
+  observed_data   <- matrix(NA, nrow = K, ncol = N)
+  received_rewards<- numeric(N)
+  regret          <- numeric(N)
   
-  z_true <- z_global
-  y_true <- y_global
-  dynamics<-'common'
-  batch_size <- 100
-  burn = 500
-  n_iter = 100
-  
-  data_track <-list()
-  
-  # Oracle computation
+  # Oracle precompute unchanged
   mu_selected <- matrix(0, nrow = K, ncol = N)
-  if (dynamics == "common") {
-    for (i in 1:K) {
-      for (t in 1:N) {
-        mu_selected[i, t] <- mu[i, z_true[t] + 1]
-      }
-    }
-  } else {
-    for (i in 1:K) {
-      for (t in 1:N) {
-        mu_selected[i, t] <- mu[i, z_true[i, t] + 1]
-      }
+  for (i in 1:K) {
+    for (t in 1:N) {
+      mu_selected[i,t] <- mu[i, z_true[t] + 1]
     }
   }
   oracle_arm <- apply(mu_selected, 2, which.max)
   
-  # Initialization
-  selected_arms[1] <- sample(1:K, 1)
-  observed_data <- matrix(NA, nrow = K, ncol = N)
-  observed_data[selected_arms[1], 1] <- y_true[selected_arms[1], 1]
-  received_rewards[1] <- y_true[selected_arms[1], 1]
+  selected_arms[1]     <- sample(1:K, 1)
+  observed_data[,1]    <- NA
+  observed_data[selected_arms[1],1] <- y_true[selected_arms[1],1]
+  received_rewards[1]  <- y_true[selected_arms[1],1]
+  regret[1]            <- mu_selected[oracle_arm[1],1] - 
+                           mu[selected_arms[1], z_true[1]+1]
   
-  regret[1] <- mu_selected[oracle_arm[1], 1] - 
-    if (dynamics == "common") mu[selected_arms[1], z_true[1] + 1] else mu[selected_arms[1], z_true[selected_arms[1], 1] + 1]
+  post_matrix <- NULL
   
-  # TS loop
+  # Thompson-sampling loop
   for (t in 2:N) {
     sampled_values <- numeric(K)
-    
-    if (sum(!is.na(observed_data)) >= K * 2 && t %% batch_size == 0) {
-      data_list <- list(
-        y_obs = observed_data[, 1:(t-1)],
-        K = K,
-        N = t - 1
-      )
-      
-      data_track[[t/batch_size]] <- data_list
-      model <- jags.model(model_path, data = data_list, n.chains = 1, quiet = TRUE)
-      update(model, burn)
-      post <- coda.samples(model, c("mu", "pi", paste0("z[", t - 1, "]")), n.iter = n_iter)
-      post_matrix <- as.matrix(post)
-      message(glue::glue("[{Sys.time()}] Performed inference at time step {t}"))
-    }
-    
-    if (is.matrix(post_matrix)) {
-      idx <- sample(1:nrow(post_matrix), 1)
-      pi0 <- post_matrix[idx, "pi[1]"]
-      pi1 <- post_matrix[idx, "pi[2]"]
-      if (t %% batch_size == 0) {
-        z_last <- post_matrix[idx, paste0("z[", t - 1, "]")]
+  
+
+    if (t %% batch_size == 0) {
+      for (i in 1:K) {
+        obs_idx <- which(!is.na(observed_data[i, ]))
+        if (length(obs_idx) >= 2) {
+          data_list <- list(
+            y = observed_data[i, obs_idx],
+            N = length(obs_idx)
+          )
+
+          mdl <- jags.model(
+            file     = poor_model_path,
+            data     = data_list,
+            n.chains = 1,
+            quiet    = TRUE
+          )
+          update(mdl, burn)
+          post <- coda.samples(
+            mdl,
+            variable.names = c("mu0","mu1","pi[1]","pi[2]",
+                                paste0("z[", length(obs_idx), "]")),
+            n.iter         = n_iter
+          )
+          post_matrix <- as.matrix(post)
+
+          idx <- sample(nrow(post_matrix), 1)
+          mu0 <- post_matrix[idx, "mu0"]
+          mu1 <- post_matrix[idx, "mu1"]
+          pi_low  <- post_matrix[idx, "pi[1]"]
+          pi_high <- post_matrix[idx, "pi[2]"]
+          
+          z_prev <- ifelse(is.na(observed_data[i, obs_idx[length(obs_idx)]]),
+                           0, 
+                           observed_data[i, obs_idx[length(obs_idx)]])
+          p_z1 <- z_prev*pi_high + (1-z_prev)*pi_low
+
+          sampled_values[i] <- p_z1 * mu1 + (1-p_z1)*mu0
+        }
       }
-      sampled_pi <- ifelse(z_last == 0, pi0, pi1)
-      z_t <- rbinom(1, 1, prob = sampled_pi)
-      z_last <- z_t
     }
-    
-    # Arm selection
-    for (i in 1:K) {
-      if (is.matrix(post_matrix)) {
-        mu0 <- post_matrix[idx, paste0("mu[", i, ",1]")]
-        mu1 <- post_matrix[idx, paste0("mu[", i, ",2]")]
-        sampled_values[i] <- (1 - z_t) * mu0 + z_t * mu1
-      } else {
-        sampled_values[i] <- runif(1)
-      }
+    if (all(sampled_values == 0)) {
+      sampled_values <- runif(K)
     }
-    
-    selected_arms[t] <- which.max(sampled_values)
-    r_t <- y_true[selected_arms[t], t]
+  
+
+    a_t <- which.max(sampled_values)
+    selected_arms[t] <- a_t
+  
+    r_t <- y_true[a_t, t]
     received_rewards[t] <- r_t
-    observed_data[selected_arms[t], t] <- r_t
-    
-    true_z <- if (dynamics == "common") z_true[t] else z_true[selected_arms[t], t]
-    regret[t] <- mu_selected[oracle_arm[t], t] - mu[selected_arms[t], true_z + 1]
+    observed_data[a_t, t] <- r_t
+    true_z <- z_true[t]
+    regret[t] <- mu_selected[oracle_arm[t], t] - mu[a_t, true_z+1]
   }
-```
-
-
-
-```{r}
-library(rjags)
-library(coda)
-library(ggmcmc)
-library(dplyr)
-library(ggplot2)
-
-# Parameters
-param_names <- c("mu", "pi")
-
-# Result list for ggmcmc
-gg_data_all <- list()
-
-# Loop through data_track list
-for (i in seq_along(data_track)) {
-  cat("Running model for dataset", i, "\n")
   
-  model <- jags.model(model_path, data = data_track[[i]], n.chains = 1, quiet = TRUE)
-  update(model, burn)
-  
-  post <- coda.samples(model, variable.names = param_names, n.iter = n_iter)
-  
-  # Convert to ggmcmc data frame and tag with dataset id
-  gg_data <- ggs(post)
-  gg_data$dataset <- paste0("Dataset ", i)
-  gg_data_all[[i]] <- gg_data
-}
-
-# Combine all datasets
-gg_data_combined <- bind_rows(gg_data_all)
-
-# Plot traceplots with faceting by parameter and coloring by dataset
-ggplot(gg_data_combined, aes(x = Iteration, y = value, color = dataset)) +
-  geom_line(alpha = 0.7) +
-  facet_wrap(~Parameter, scales = "free_y") +
-  theme_minimal() +
-  labs(title = "Traceplots by Parameter Across Datasets",
-       y = "Parameter Value", x = "Iteration")
-
 ```
