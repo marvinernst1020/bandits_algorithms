@@ -183,6 +183,53 @@ z_global <- truth$z
 ```
 ```{r}
 
+
+# Parameters
+param_names <- c("mu", "pi")
+
+# Result list for ggmcmc
+gg_data_all <- list()
+
+# Loop through data_track list
+for (i in seq_along(data_track)) {
+  cat("Running model for dataset", i, "\n")
+  
+  model <- jags.model(model_path, data = data_track[[i]], n.chains = 1, quiet = TRUE)
+  update(model, burn)
+  
+  post <- coda.samples(model, variable.names = param_names, n.iter = n_iter)
+  
+  # Convert to ggmcmc data frame and tag with dataset id
+  gg_data <- ggs(post)
+  gg_data$dataset <- paste0("Dataset ", i)
+  gg_data_all[[i]] <- gg_data
+}
+
+# Combine all datasets
+gg_data_combined <- bind_rows(gg_data_all)
+
+# Plot traceplots with faceting by parameter and coloring by dataset
+ggplot(gg_data_combined, aes(x = Iteration, y = value, color = dataset)) +
+  geom_line(alpha = 0.7, size = 0.9) +
+  facet_wrap(~Parameter, scales = "free_y") +
+  labs(
+    title = "Traceplots Across JAGGS Runs",
+    x = "Sample",
+    y = "Parameter Value"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+```
+
+
+
+
+```{r}
+
 means_df <- gg_data_combined %>%
   mutate(run = as.integer(gsub("Dataset ", "", dataset))) %>%
   group_by(run, Parameter) %>%
@@ -203,6 +250,10 @@ ggplot(means_df, aes(x = run, y = mean_value)) +
 
 #pis here look good but not the mus
 ```
+
+
+
+
 ```{r}
 # the issue above was that mus are getting mixed up to i set the lower ones together and the high ones together
 tidy_means <- means_df %>%
