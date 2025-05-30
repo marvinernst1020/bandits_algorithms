@@ -84,12 +84,13 @@ class GaussianTS:
         return np.argmax(samples)
 
     def update(self, arm, reward):
-        self.counts[arm] += 1
         n = self.counts[arm]
+        sum_r = self.sum_rewards[arm]
+
+        post_var = 1 / (1 / self.prior_vars[arm] + 1 / self.obs_var)
+        post_mean = post_var * (self.prior_means[arm] / self.prior_vars[arm] + reward / self.obs_var)
+
+        self.counts[arm] += 1
         self.sum_rewards[arm] += reward
-
-        post_var = 1 / (1 / self.prior_vars[arm] + n / self.obs_var)
-        post_mean = post_var * (self.prior_means[arm] / self.prior_vars[arm] + self.sum_rewards[arm] / self.obs_var)
-
-        self.prior_vars[arm] = post_var
         self.prior_means[arm] = post_mean
+        self.prior_vars[arm] = post_var
