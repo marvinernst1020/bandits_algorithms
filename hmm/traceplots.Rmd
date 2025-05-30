@@ -42,7 +42,7 @@ K <- 2
 
 Number of time steps:
 ```{r}
-N <- 10000
+N <- 1000
 ```
 
 Transition Probability:
@@ -288,91 +288,145 @@ y_local <- truth$y
 z_local <- truth$z
 ```
 
-```{r cars}
-  N<- 5000
 
-  model_path <- poor_model_path
-  
-  selected_arms   <- integer(N)
-  observed_data   <- matrix(NA, nrow = K, ncol = N)
-  received_rewards<- numeric(N)
-  regret          <- numeric(N)
-  
-  # Oracle precompute unchanged
-  mu_selected <- matrix(0, nrow = K, ncol = N)
+```{r}
+
+model_path <- poor_model_path
+batch_size <- 10
+burn       <- 1000
+n_iter     <- 200
+
+K      <- nrow(mu)
+N      <- 1000
+y_true <- y_local
+
+selected_arms    <- integer(N)
+received_rewards <- numeric(N)
+regret           <- numeric(N)
+observed_data    <- matrix(NA_real_, nrow=K, ncol=N)
+
+# oracle: best arm per (i,t)
+mu_selected <- matrix(0, nrow=K, ncol=N)
+for (i in 1:K) {
+  for (t in 1:N) {
+    mu_selected[i,t] <- mu[i, z_local[i,t] + 1]
+  }
+}
+oracle_arm <- max.col(t(mu_selected))
+
+selected_arms[1]    <- sample(K,1)
+observed_data[selected_arms[1],1] <- y_true[selected_arms[1],1]
+received_rewards[1] <- y_true[selected_arms[1],1]
+regret[1]           <- mu_selected[oracle_arm[1],1] -
+                       mu[selected_arms[1], z_local[selected_arms[1],1] + 1]
+
+
+z_last <- z_local[,1]
+post_matrix <- NULL
+
+for (t in 2:N) {
+  sampled_values <- numeric(K)
+
+  if (is.matrix(post_matrix)) {
+    idx <- sample(nrow(post_matrix),1)
+    for (i in 1:K) {
+      mu0_i <- post_matrix[idx, "mu0"]
+      mu1_i <- post_matrix[idx, "mu1"]
+      sampled_values[i] <- (1 - z_last[i])*mu0_i + z_last[i]*mu1_i
+      # update latent
+      p1 <- post_matrix[idx, "pi[2]"] * z_last[i] +
+            post_matrix[idx, "pi[1]"] * (1-z_last[i])
+      z_last[i] <- rbinom(1,1,p1)
+    }
+  } else {
+    sampled_values <- runif(K)
+  }
+
+  a_t               <- which.max(sampled_values)
+  selected_arms[t]  <- a_t
+  r_t               <- y_true[a_t, t]
+  received_rewards[t]   <- r_t
+  observed_data[a_t, t] <- r_t
+
+  # regret
+  regret[t] <- mu_selected[oracle_arm[t], t] -
+               mu[a_t, z_local[a_t,t] + 1]
+}
+
+
+records <- list()
+for (b in seq_len(floor(N/batch_size))) {
+  end   <- b * batch_size
   for (i in 1:K) {
-    for (t in 1:N) {
-      mu_selected[i,t] <- mu[i, z_true[t] + 1]
-    }
+    obs_idx <- which(!is.na(observed_data[i,1:end]))
+    y_i     <- observed_data[i, obs_idx]
+    N_i     <- length(y_i)
+    if (N_i < 2) next
+    
+    data_i <- list(y = y_i, N = N_i)
+    m      <- jags.model(
+      file     = model_path,
+      data     = data_i,
+      n.chains = 1,
+      quiet    = TRUE
+    )
+    update(m, burn)
+    post <- coda.samples(
+      m,
+      variable.names = c("mu0","mu1","pi[1]","pi[2]"),
+      n.iter         = n_iter
+    )
+    df <- ggs(post) %>%
+      mutate(batch = b, arm = i)
+    records[[length(records)+1]] <- df
   }
-  oracle_arm <- apply(mu_selected, 2, which.max)
-  
-  selected_arms[1]     <- sample(1:K, 1)
-  observed_data[,1]    <- NA
-  observed_data[selected_arms[1],1] <- y_true[selected_arms[1],1]
-  received_rewards[1]  <- y_true[selected_arms[1],1]
-  regret[1]            <- mu_selected[oracle_arm[1],1] - 
-                           mu[selected_arms[1], z_true[1]+1]
-  
-  post_matrix <- NULL
-  
-  # Thompson-sampling loop
-  for (t in 2:N) {
-    sampled_values <- numeric(K)
-  
+}
 
-    if (t %% batch_size == 0) {
-      for (i in 1:K) {
-        obs_idx <- which(!is.na(observed_data[i, ]))
-        if (length(obs_idx) >= 2) {
-          data_list <- list(
-            y = observed_data[i, obs_idx],
-            N = length(obs_idx)
-          )
+gg_data <- bind_rows(records) %>%
+  mutate(
+    Parameter = case_when(
+      Parameter=="mu0"    ~ paste0("mu[", arm, ",1]"),
+      Parameter=="mu1"    ~ paste0("mu[", arm, ",2]"),
+      TRUE                ~ Parameter
+    )
+  )
 
-          mdl <- jags.model(
-            file     = poor_model_path,
-            data     = data_list,
-            n.chains = 1,
-            quiet    = TRUE
-          )
-          update(mdl, burn)
-          post <- coda.samples(
-            mdl,
-            variable.names = c("mu0","mu1","pi[1]","pi[2]",
-                                paste0("z[", length(obs_idx), "]")),
-            n.iter         = n_iter
-          )
-          post_matrix <- as.matrix(post)
+means_df <- gg_data %>%
+  group_by(batch, Parameter) %>%
+  summarise(mean_value = mean(value), .groups="drop") %>%
+  filter(str_detect(Parameter, "^mu"))
 
-          idx <- sample(nrow(post_matrix), 1)
-          mu0 <- post_matrix[idx, "mu0"]
-          mu1 <- post_matrix[idx, "mu1"]
-          pi_low  <- post_matrix[idx, "pi[1]"]
-          pi_high <- post_matrix[idx, "pi[2]"]
-          
-          z_prev <- ifelse(is.na(observed_data[i, obs_idx[length(obs_idx)]]),
-                           0, 
-                           observed_data[i, obs_idx[length(obs_idx)]])
-          p_z1 <- z_prev*pi_high + (1-z_prev)*pi_low
+tidy_means <- means_df %>%
+  extract(
+    Parameter,
+    into    = c("arm","state"),
+    regex   = "mu\\[(\\d+),(\\d+)\\]",
+    convert = TRUE
+  ) %>%
+  group_by(batch, arm) %>%
+  arrange(mean_value) %>%
+  mutate(state2 = row_number()) %>%
+  ungroup() %>%
+  mutate(
+    Parameter = paste0("mu[", arm, ",", state2, "]")
+  )
 
-          sampled_values[i] <- p_z1 * mu1 + (1-p_z1)*mu0
-        }
-      }
-    }
-    if (all(sampled_values == 0)) {
-      sampled_values <- runif(K)
-    }
-  
+plot_df <- select(tidy_means, batch, Parameter, mean_value)
 
-    a_t <- which.max(sampled_values)
-    selected_arms[t] <- a_t
-  
-    r_t <- y_true[a_t, t]
-    received_rewards[t] <- r_t
-    observed_data[a_t, t] <- r_t
-    true_z <- z_true[t]
-    regret[t] <- mu_selected[oracle_arm[t], t] - mu[a_t, true_z+1]
-  }
-  
+
 ```
+```{r}
+ggplot(plot_df, aes(x = batch, y = mean_value)) +
+  geom_line(size = 0.9, color = "black", alpha = 0.7) +
+  facet_wrap(~ Parameter, scales = "free_y", ncol = 1) +
+  labs(
+    title = "Independent (Poor) Model: Posterior Means by Batch",
+    x     = "Batch index",
+    y     = "Posterior Mean"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+
+
