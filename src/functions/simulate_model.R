@@ -52,15 +52,10 @@ simulate_model_on_run <- function(run_id, N, K,
       res <- bandit_baselines("ts", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 1)
       model <- "M0 TS"
-    }else if (complexity == "ar") {
-      res   <- thompson_ar(K,N,data$mu,data$y,data$z,
-                           100, 1000, 200, dynamics)
-      model <- "AR TS"
-      
     } else if (complexity == "kfas") {
       res   <- thompson_ar_kfas(K,N,data$mu,data$y,data$z,
                                 100, 1000, 200, dynamics)
-      model <- "KFAS TS"
+      model <- "AR TS"
     }
   } else if (algorithm == "ucb") {
     if (complexity == "advanced") {
@@ -77,15 +72,10 @@ simulate_model_on_run <- function(run_id, N, K,
       res <- bandit_baselines("ucb-tuned", K, N, data$y, data$z, data$mu,
                               dynamics = dynamics, batch_size = 1)
       model <- "M0 UCB"
-    }else if (complexity == "ar") {
-      res   <- ucb_ar(K,N,data$mu,data$y,data$z,
-                      100, 500, 100, dynamics)
-      model <- "AR UCB"
-      
     } else if (complexity == "kfas") {
       res   <- ucb_ar_kfas(K,N,data$mu,data$y,data$z,
                            100, 500, 100, dynamics)
-      model <- "KFAS UCB"
+      model <- "AR UCB"
     }
   } else {
     stop("Unsupported algorithm")

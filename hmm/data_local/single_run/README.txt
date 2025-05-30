@@ -1,6 +1,6 @@
 Scenario: single_run
 K: 2
-N: 5000
+N: 1000
 
 mu:
      [,1] [,2]
