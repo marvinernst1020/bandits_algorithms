@@ -309,9 +309,9 @@ ggplot(ucb_compare_df_s1, aes(x = time, y = inst_regret, color = model)) +
 ```
 
 
-## 2.3 KFAS AR
+## 2.3 AR
 
-### 2.3.1 TS KFAS
+### 2.3.1 TS AR
 
 #### Baseline
 
@@ -336,7 +336,7 @@ kfas_ar_results_df <- data.frame(
   time               = seq_along(res_kfas_ar$cumulative_reward),
   cumulative_reward  = res_kfas_ar$cumulative_reward,
   cumulative_regret  = res_kfas_ar$cumulative_regret,
-  model              = "KFAS AR TS")
+  model              = "AR TS")
 ```
 
 
@@ -345,17 +345,17 @@ ts_compare_df <- bind_rows(baseline_ts_results_df, kfas_ar_results_df)
 
 ggplot(ts_compare_df, aes(time, cumulative_reward, colour = model)) +
   geom_line(size = 1) +
-  labs(title = "Cumulative Reward: Baseline vs KFAS AR(1) TS",
+  labs(title = "Cumulative Reward: Baseline vs AR(1) TS",
        y = "Cumulative Reward") +
   theme_minimal()
 
 ggplot(ts_compare_df, aes(time, cumulative_regret, colour = model)) +
   geom_line(size = 1) +
-  labs(title = "Cumulative Regret: Baseline vs KFAS AR(1) TS",
+  labs(title = "Cumulative Regret: Baseline vs AR(1) TS",
        y = "Cumulative Regret") +
   theme_minimal()
 ```
-### 2.3.2 UCB KFAS
+### 2.3.2 UCB AR
 
 ```{r}
 res_kfas_ucb <- ucb_ar_kfas(
@@ -366,7 +366,7 @@ kfas_ucb_results_df <- data.frame(
   time               = seq_along(res_kfas_ucb$cumulative_reward),
   cumulative_reward  = res_kfas_ucb$cumulative_reward,
   cumulative_regret  = res_kfas_ucb$cumulative_regret,
-  model              = "KFAS AR UCB")
+  model              = "AR UCB")
 ```
 
 
@@ -375,13 +375,13 @@ ucb_compare_df <- bind_rows(baseline_ucb_results_df, kfas_ucb_results_df)
 
 ggplot(ucb_compare_df, aes(time, cumulative_reward, colour = model)) +
   geom_line(size = 1) +
-  labs(title = "Cumulative Reward: Baseline vs KFAS AR(1) UCB",
+  labs(title = "Cumulative Reward: Baseline vs AR(1) UCB",
        y = "Cumulative Reward") +
   theme_minimal()
 
 ggplot(ucb_compare_df, aes(time, cumulative_regret, colour = model)) +
   geom_line(size = 1) +
-  labs(title = "Cumulative Regret: Baseline vs KFAS AR(1) UCB",
+  labs(title = "Cumulative Regret: Baseline vs AR(1) UCB",
        y = "Cumulative Regret") +
   theme_minimal()
 ```
