@@ -170,7 +170,7 @@ ts_compare_df <- bind_rows(baseline_ts_df, poor_ts_df)
 
 ### Cumulative Reward:
 ```{r}
-plotts<-plot_single_cumulative_regret(ts_compare_df)
+plotts<-plot_cumulative_regret(ts_compare_df)
 ggsave(file.path(output_dir, "poor_ts_cumulative_regret_single.png"), plot = plotts, width = 8, height = 6, dpi = 300)
 ```
 
@@ -199,7 +199,7 @@ ts_ar_compare_df
 
 ```{r}
 
-plotucb<-plot_single_cumulative_regret(ts_ar_compare_df) 
+plotucb<-plot_cumulative_regret(ts_ar_compare_df) 
 ggsave(file.path(output_dir, "ar_ts_cumulative_regret_single.png"), plot = plotucb, width = 8, height = 6, dpi = 300)
 ```
 
@@ -245,7 +245,7 @@ ucb_compare_df <- bind_rows(baseline_ucb_df, poor_ucb_df)
 
 ### Cumulative Regret:
 ```{r}
-plotucb<-plot_single_cumulative_regret(ucb_compare_df)
+plotucb<-plot_cumulative_regret(ucb_compare_df)
 ggsave(file.path(output_dir, "poor_ucb_cumulative_regret_single.png"), plot = plotucb, width = 8, height = 6, dpi = 300)
 ```
 
@@ -283,7 +283,7 @@ ucb_ar_compare_df <- bind_rows(baseline_ucb_df, ar_ucb_df)
 
 
 ```{r}
-plt<- plot_single_cumulative_regret(ucb_ar_compare_df)
+plt<- plot_cumulative_regret(ucb_ar_compare_df)
 ggsave(file.path(output_dir, "ar_ucb_cumulative_regret_single.png"), plot = plt, width = 8, height = 6, dpi = 300)
 ```
 

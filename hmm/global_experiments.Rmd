@@ -139,7 +139,7 @@ baseline_ts_results_df <- data.frame(
   time = seq_along(baseline_ts_results$cumulative_reward),
   cumulative_reward = baseline_ts_results$cumulative_reward,
   cumulative_regret = baseline_ts_results$cumulative_regret,
-  model = "Baseline TS"
+  model = "M0 TS"
 )
 ```
 
@@ -160,7 +160,7 @@ adv_ts_results_df <- data.frame(
   time = seq_along(res_adv_ts_common$cumulative_reward),
   cumulative_reward = res_adv_ts_common$cumulative_reward,
   cumulative_regret = res_adv_ts_common$cumulative_regret,
-  model = "Advanced TS"
+  model = "M2 TS"
 )
 ```
 
@@ -183,12 +183,18 @@ ggsave(file.path(output_dir, "ts_cumulative_reward_single.png"), plot = plotts, 
 
 ### Cumulative Regret:
 ```{r}
-plotts<-ggplot(ts_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
-  geom_line(size = 1) +
-  labs(title = "Cumulative Regret: Baseline vs Advanced Thompson Sampling",
-       x = "Time",
-       y = "Cumulative Regret") +
-  theme_minimal()
+ts_regret_df <- ts_compare_df_s1 %>%
+  rename(
+    model_id         = model,           # plot_cumulative_regret() expects 'model_id'
+    cumulative_regret = cumulative_regret
+  ) %>%
+  select(time, cumulative_regret, model_id)
+
+# Step 2: Call the existing function
+plotts<-plot_cumulative_regret(
+  df      = ts_regret_df,
+  title   = "Cumulative Regret: Baseline vs Advanced TS"
+)
 
 ggsave(file.path(output_dir, "ts_cumulative_regret_single.png"), plot = plotts, width = 8, height = 6, dpi = 300)
 ```
@@ -206,11 +212,13 @@ ggplot(ts_compare_df_s1, aes(x = time, y = inst_regret, color = model)) +
        y = "Instantaneous Regret") +
   theme_minimal()
 ```
+
+
 ```{r}
 inst_regret_diff_df <- ts_compare_df_s1 %>%
   select(time, model, inst_regret) %>%
   pivot_wider(names_from = model, values_from = inst_regret) %>%
-  mutate(regret_diff = `Advanced TS` - `Baseline TS`)
+  mutate(regret_diff = `M2 TS` - `M0 TS`)
 
 # Plot the difference in instantaneous regret
 ggplot(inst_regret_diff_df, aes(x = time, y = regret_diff)) +
@@ -239,7 +247,7 @@ baseline_ucb_results_df <- data.frame(
   time = seq_along(baseline_ucb_results$cumulative_reward),
   cumulative_reward = baseline_ucb_results$cumulative_reward,
   cumulative_regret = baseline_ucb_results$cumulative_regret,
-  model = "Baseline UCB"
+  model = "M0 UCB"
 )
 ```
 
@@ -261,7 +269,7 @@ adv_ucb_results_df <- data.frame(
   time = seq_along(res_adv_ucb_common$cumulative_reward),
   cumulative_reward = res_adv_ucb_common$cumulative_reward,
   cumulative_regret = res_adv_ucb_common$cumulative_regret,
-  model = "Advanced UCB"
+  model = "M2 UCB"
 )
 ```
 
@@ -284,12 +292,18 @@ ggsave(file.path(output_dir, "ucb_cumulative_reward_single.png"), plot = plotucb
 
 ### Cumulative Regret:
 ```{r}
-plotucb<-ggplot(ucb_compare_df_s1, aes(x = time, y = cumulative_regret, color = model)) +
-  geom_line(size = 1) +
-  labs(title = "Cumulative Regret: Baseline vs Advanced UCB",
-       x = "Time",
-       y = "Cumulative Regret") +
-  theme_minimal()
+ucb_regret_df <- ucb_compare_df_s1 %>%
+  rename(
+    model_id         = model,           # plot_cumulative_regret() expects 'model_id'
+    cumulative_regret = cumulative_regret
+  ) %>%
+  select(time, cumulative_regret, model_id)
+
+# Step 2: Call the existing function
+plotucb<-plot_cumulative_regret(
+  df      = ucb_regret_df,
+  title   = "Cumulative Regret: Baseline vs Advanced UCB"
+)
 
 ggsave(file.path(output_dir, "ucb_cumulative_regret_single.png"), plot = plotucb, width = 8, height = 6, dpi = 300)
 ```
@@ -322,12 +336,13 @@ baseline_ts_results_df <- data.frame(
   time               = seq_along(baseline_ts_results$cumulative_reward),
   cumulative_reward  = baseline_ts_results$cumulative_reward,
   cumulative_regret  = baseline_ts_results$cumulative_regret,
-  model              = "Baseline TS")
+  model              = "M0 TS")
 ```
 
 ### AR
 
 ```{r}
+library(KFAS)
 res_kfas_ar <- thompson_ar_kfas(
   K,N,mu,y_global,z_global,
   batch_size = 100, burn = 1000, n_iter = 200,
@@ -343,17 +358,20 @@ kfas_ar_results_df <- data.frame(
 ```{r}
 ts_compare_df <- bind_rows(baseline_ts_results_df, kfas_ar_results_df)
 
-ggplot(ts_compare_df, aes(time, cumulative_reward, colour = model)) +
-  geom_line(size = 1) +
-  labs(title = "Cumulative Reward: Baseline vs AR(1) TS",
-       y = "Cumulative Reward") +
-  theme_minimal()
+ts_regret_df <- ts_compare_df %>%
+  rename(
+    model_id         = model,          
+    cumulative_regret = cumulative_regret
+  ) %>%
+  select(time, cumulative_regret, model_id)
 
-ggplot(ts_compare_df, aes(time, cumulative_regret, colour = model)) +
-  geom_line(size = 1) +
-  labs(title = "Cumulative Regret: Baseline vs AR(1) TS",
-       y = "Cumulative Regret") +
-  theme_minimal()
+# Step 2: Call the existing function
+a<-plot_cumulative_regret(
+  df      = ts_regret_df,
+  title   = "Cumulative Regret: Baseline vs AR(1) TS"
+)
+
+ggsave(file.path(output_dir, "ar_ts_cumulative_regret_single.png"), plot = a, width = 8, height = 6, dpi = 300)
 ```
 ### 2.3.2 UCB AR
 
@@ -373,17 +391,20 @@ kfas_ucb_results_df <- data.frame(
 ```{r}
 ucb_compare_df <- bind_rows(baseline_ucb_results_df, kfas_ucb_results_df)
 
-ggplot(ucb_compare_df, aes(time, cumulative_reward, colour = model)) +
-  geom_line(size = 1) +
-  labs(title = "Cumulative Reward: Baseline vs AR(1) UCB",
-       y = "Cumulative Reward") +
-  theme_minimal()
+ucb_regret_df <- ucb_compare_df %>%
+  rename(
+    model_id         = model,           # plot_cumulative_regret() expects 'model_id'
+    cumulative_regret = cumulative_regret
+  ) %>%
+  select(time, cumulative_regret, model_id)
 
-ggplot(ucb_compare_df, aes(time, cumulative_regret, colour = model)) +
-  geom_line(size = 1) +
-  labs(title = "Cumulative Regret: Baseline vs AR(1) UCB",
-       y = "Cumulative Regret") +
-  theme_minimal()
+# Step 2: Call the existing function
+a <- plot_cumulative_regret(
+  df      = ucb_regret_df,
+  title   = "Cumulative Regret: Baseline vs AR(1) UCB"
+)
+
+ggsave(file.path(output_dir, "ar_ucb_cumulative_regret_single.png"), plot = a, width = 8, height = 6, dpi = 300)
 ```
 
 
@@ -579,6 +600,7 @@ ts_summary_ar <- ts_runs_df_ar |>
 
 ```{r}
 plot_cumulative_regret(ts_summary_ar) 
+
 ```
 
 
