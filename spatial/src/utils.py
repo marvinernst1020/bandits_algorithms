@@ -27,6 +27,9 @@ def plot_cumulative_regret(df, palette=None):
         frameon=False
     )
     plt.tight_layout()
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.show()
 
 def plot_cumulative_regret_logit(df, palette=None):
@@ -73,6 +76,9 @@ def plot_instantaneous_regret(df, palette=None):
         frameon=False
     )
     plt.tight_layout()
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.show()
 
 def ensure_scalar(x):

@@ -50,8 +50,8 @@ class GaussianUCB:
         self.squared_sums = np.zeros(K)
 
     def select_arm(self, t=None):
-        if t is None or t < self.K:
-            return t if t is not None else np.random.randint(0, self.K)
+        if t is not None and self.counts.sum() < self.K:
+            return int(np.argmin(self.counts))
         ucb_values = np.zeros(self.K)
         for a in range(self.K):
             n = self.counts[a]
@@ -68,6 +68,58 @@ class GaussianUCB:
         n = self.counts[arm]
         self.counts[arm] += 1
         self.means[arm] += (reward - self.means[arm]) / (n + 1)
+        self.squared_sums[arm] += reward ** 2
+
+class GaussianUCB0:
+    def __init__(self, K):
+        self.K = K
+        self.counts = np.zeros(K)
+        self.values = np.zeros(K)
+        self.t = 0
+
+    def select_arm(self):
+        if self.t < self.K:
+            # Ensure each arm is pulled once
+            return self.t
+
+        bonus = np.sqrt((2 * np.log(self.t)) / (self.counts + 1e-8))
+        ucb_values = self.values + bonus
+        return np.argmax(ucb_values)
+
+    def update(self, arm, reward):
+        self.t += 1
+        self.counts[arm] += 1
+        n = self.counts[arm]
+        self.values[arm] += (reward - self.values[arm]) / n
+
+class GaussianUCB1:
+    def __init__(self, K):
+        self.K = K
+        self.t = 0
+        self.counts = np.zeros(K)
+        self.means = np.zeros(K)
+        self.squared_sums = np.zeros(K)  # For empirical variance
+
+    def select_arm(self):
+        if self.t < self.K:
+            return self.t  # pull each arm once
+
+        bonuses = []
+        for a in range(self.K):
+            mean = self.means[a]
+            count = self.counts[a]
+            variance = (self.squared_sums[a] / count - mean**2) if count > 0 else 0
+            term = min(1/4, variance + np.sqrt(2 * np.log(self.t) / count))
+            bonus = np.sqrt((np.log(self.t) / count) * term)
+            bonuses.append(mean + bonus)
+
+        return np.argmax(bonuses)
+
+    def update(self, arm, reward):
+        self.t += 1
+        self.counts[arm] += 1
+        n = self.counts[arm]
+        self.means[arm] += (reward - self.means[arm]) / n
         self.squared_sums[arm] += reward ** 2
 
 class GaussianTS:
@@ -94,3 +146,10 @@ class GaussianTS:
         self.sum_rewards[arm] += reward
         self.prior_means[arm] = post_mean
         self.prior_vars[arm] = post_var
+
+
+
+        #bonus = np.sqrt(
+                #(np.log(t or 1) / (n + 1e-8)) *
+                #min(1/4, var_hat + np.sqrt(2 * np.log(t or 1) / (n + 1e-8)))
+            #)

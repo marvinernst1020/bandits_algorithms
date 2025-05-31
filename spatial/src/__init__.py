@@ -11,7 +11,9 @@ from .standard_bandits import (
     BernoulliUCB,
     BernoulliTS,
     GaussianUCB,
-    GaussianTS
+    GaussianTS,
+    GaussianUCB0,
+    GaussianUCB1
 )
 
 # GP bandits

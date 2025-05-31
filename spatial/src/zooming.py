@@ -33,7 +33,7 @@ class Zooming(Algorithm):
     The implementation of the Zooming algorithm
     """
 
-    def __init__(self, nu=1, rho=0.9, domain=None, partition=BinaryPartition):
+    def __init__(self, nu=1, rho=0.9, domain=None, partition=BinaryPartition, scoring_method="ucb", reward_type=None): # edited by Marvin Ernst (2025)
         """
         Initialization of the Zooming algorithm
 
@@ -47,6 +47,12 @@ class Zooming(Algorithm):
             The domain of the objective to be optimized
         partition:
             The partition choice of the algorithm
+
+        Below, added by Marvin Ernst (2025):
+        scoring_method: str
+            The method for scoring arms ("ucb", "tuned_ucb", "ts")
+        reward_type: str
+            The type of reward distribution ("gaussian", "bernoulli")
         """
 
         super(Zooming, self).__init__()
@@ -64,10 +70,21 @@ class Zooming(Algorithm):
         self.time = 0
 
         self.best_arm = None
+        self.scoring_method = scoring_method # added by Marvin Ernst (2025)
+        self.reward_type = reward_type # also added by Marvin Ernst (2025)
 
         self.active_points = {}
         self.pulled_times = {}
-        self.average_rewards = {}
+        # ----------------------------
+        # Edited by Marvin Ernst (2025)
+        if self.reward_type == "bernoulli":
+            self.successes = {}
+            self.failures = {}
+        else:
+            self.average_rewards = {}
+
+        self.squared_rewards = {}  # initialize the dictionary here
+        # ----------------------------
 
         self.partition.deepen()
         for child in self.partition.get_layer_node_list(depth=1):
@@ -89,7 +106,15 @@ class Zooming(Algorithm):
         active_arm = point(node.get_cpoint())
         self.active_points[active_arm] = node
         self.pulled_times[active_arm] = 0
-        self.average_rewards[active_arm] = 0
+        # ----------------------------
+        # Edited by Marvin Ernst (2025)
+        if self.reward_type == "bernoulli":
+            self.successes[active_arm] = 0
+            self.failures[active_arm] = 0
+        else:
+            self.average_rewards[active_arm] = 0
+            self.squared_rewards[active_arm] = 0.0
+        # ----------------------------
 
     def pull(self, time):
         """
@@ -109,13 +134,45 @@ class Zooming(Algorithm):
 
         maximum_r_t = -np.inf
         self.best_arm = None
+        # ----------------------------
+        # Edited by Marvin Ernst (2025)
+        # Additionaly having the opiton to choose tuned UCB or Thompson Sampling,
+        # and not only standard UCB, also havin the option between Bernoulli and Gaussian rewards
         for arm in self.active_points.keys():
-            arm_r_t = self.average_rewards[arm] + 2 * np.sqrt(
-                8 * self.phase / (2 + self.pulled_times[arm])
-            )
-            if arm_r_t >= maximum_r_t:
-                maximum_r_t = arm_r_t
+            pulls = self.pulled_times[arm]
+            if self.reward_type == "bernoulli":
+                successes = self.successes[arm]
+                failures = self.failures[arm]
+                total = successes + failures
+                mean = successes / total if total > 0 else 0
+            else:
+                mean = self.average_rewards[arm]
+            if self.scoring_method == "ucb":
+                # originally which is should be for the bernoulli rewards, it was:
+                # bonus = 2 * np.sqrt(8 * self.phase / (2 + pulls))
+                bonus = np.sqrt((2 * np.log(self.time + 1)) / (pulls + 1e-6))
+                score = mean + bonus
+            elif self.scoring_method == "tuned_ucb":
+                # Gaussian variance estimate
+                rewards_squared = self.squared_rewards[arm]
+                mean_square = rewards_squared / pulls if pulls > 0 else 0
+                variance_estimate = max(0.0, mean_square - mean**2)
+                bonus = np.sqrt((np.log(self.time + 1) / (pulls + 1e-6)) * min(0.25, variance_estimate + np.sqrt((2 * np.log(self.time + 1)) / (pulls + 1e-6))))
+                score = mean + bonus
+            elif self.scoring_method == "ts":
+                if self.reward_type == "bernoulli":
+                    alpha = 1 + self.successes[arm]
+                    beta = 1 + self.failures[arm]
+                    score = np.random.beta(alpha, beta)
+                else:
+                    score = np.random.normal(loc=mean, scale=1.0 / np.sqrt(pulls + 1e-6))
+            else:
+                raise ValueError(f"Unknown scoring method: {self.scoring_method}")
+
+            if score >= maximum_r_t:
+                maximum_r_t = score
                 self.best_arm = arm
+            # ----------------------------
 
         return self.best_arm.get_point()
 
@@ -134,11 +191,21 @@ class Zooming(Algorithm):
         -------
 
         """
-        self.average_rewards[self.best_arm] = (
-            self.average_rewards[self.best_arm] * self.pulled_times[self.best_arm]
-            + reward
-        ) / (self.pulled_times[self.best_arm] + 1)
+        # ----------------------------
+        # Added by Marvin Ernst (2025):
+        if self.reward_type == "bernoulli":
+            if reward > 0.5:
+                self.successes[self.best_arm] += 1
+            else:
+                self.failures[self.best_arm] += 1
+        else:
+            self.average_rewards[self.best_arm] = (
+                self.average_rewards[self.best_arm] * self.pulled_times[self.best_arm]
+                + reward
+            ) / (self.pulled_times[self.best_arm] + 1)
         self.pulled_times[self.best_arm] += 1
+        self.squared_rewards[self.best_arm] += reward**2
+        # ----------------------------
 
         self.time += 1
 
@@ -209,8 +276,9 @@ Added by Marvin Ernst (2025)
 # As the Zooming algorithm is not a bandit algorithm, we need to wrap it in a bandit algorithm
 # to use it in the bandit setting. The wrapper will select the arm with the minimum distance to the point
 # selected by the Zooming algorithm. - for discrete arms:
+
 class DiscreteZoomingWrapper:
-    def __init__(self, f, arms, domain=[[0, 1], [0, 1]], nu=1, rho=0.9):
+    def __init__(self, f, arms, domain=[[0, 1], [0, 1]], nu=1, rho=0.9, scoring_method="ucb", reward_type="gaussian"):
         """
         Wraps the continuous Zooming algorithm for use in a discrete-arm bandit setting.
 
@@ -226,9 +294,13 @@ class DiscreteZoomingWrapper:
             Smoothness parameter for the Zooming algorithm.
         rho : float
             Shrinking factor for spatial refinement.
+        scoring_method : str
+            The method for scoring arms ("ucb", "tuned_ucb", "ts")
+        reward_type : str
+            The type of reward distribution ("gaussian", "bernoulli")
         """
         self.arms = np.array(arms)
-        self.zoom = Zooming(nu=nu, rho=rho, domain=domain)
+        self.zoom = Zooming(nu=nu, rho=rho, domain=domain, scoring_method=scoring_method, reward_type=reward_type)
         self.f = f
 
     def select_arm(self, t):
