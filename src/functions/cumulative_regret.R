@@ -19,7 +19,6 @@ plot_cumulative_regret <- function(df, title = NULL, palette = NULL) {
     "M0 UCB" = "#2CA02C",
     "M1 UCB" = "#1F77B4",
     "M2 UCB" = "#D62728",
-<<<<<<< HEAD
     "AR UCB" = "#002db3"
   )
   fallback_colors <- c("#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF", "#FF9896", "#AEC7E8")
@@ -77,38 +76,3 @@ plot_cumulative_regret <- function(df, title = NULL, palette = NULL) {
   p_cum
 }
 
-=======
-    "AR UCB" = "#002db3",
-  )
-  
-  p1<-ggplot(df, aes(x = time, y = avg_regret, color = model_id)) +
-    geom_line(size = 0.9) +
-    labs(
-      title = title,
-      x = "Time Step",
-      y = "Average Cumulative Regret"
-    ) +
-    scale_color_manual(values = palette %||% default_palette) +
-    theme_classic(base_size = 12) +
-    theme(
-      legend.position = "bottom",
-      legend.title = element_blank()
-    )
-  
-  p2<-ggplot(df, aes(x = time, y = inst_regret, color = model_id)) +
-    geom_line(size = 0.9) +
-    labs(
-      title = title,
-      x = "Time Step",
-      y = "Average Instantaneous Regret"
-    ) +
-    scale_color_manual(values = palette %||% default_palette) +
-    theme_classic(base_size = 12) +
-    theme(
-      legend.position = "bottom",
-      legend.title = element_blank()
-    )
-  
-  return(list(cumulative = p1, instantaneous = p2))
-}
->>>>>>> c4b2de2277ba0cfea544805f97bbb8f03ebf5044
