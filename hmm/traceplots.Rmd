@@ -1,5 +1,5 @@
 ---
-title: "a"
+title: "Sanity checks"
 output: html_document
 date: "2025-05-17"
 ---
@@ -14,6 +14,11 @@ library(nimble)
 library(glue)
 library(future.apply)
 plan(multisession)
+library(ggmcmc)
+library(dplyr)
+library(ggplot2)
+
+output_dir <- "plots"
 ```
 
 
@@ -42,7 +47,7 @@ K <- 2
 
 Number of time steps:
 ```{r}
-N <- 1000
+N <- 10000
 ```
 
 Transition Probability:
@@ -85,105 +90,37 @@ y_global <- truth$y
 z_global <- truth$z
 ```
 
-```{r cars}
+```{r}
+model_path <- advanced_model_path
+post_matrix <- NULL
 
-  model_path <- advanced_model_path
+z_true <- z_global
+y_true <- y_global
+dynamics<-'common'
+batch_size <- 100
+burn = 1
+n_iter = 1200
+
+data_track <-list()
   
-  observed_rewards <- list()
-  selected_arms <- numeric(N)
-  received_rewards <- numeric(N)
-  regret <- numeric(N)
-  post_matrix <- NULL
-  
-  z_true <- z_global
-  y_true <- y_global
-  dynamics<-'common'
-  batch_size <- 100
-  burn = 1000
-  n_iter = 200
-  
-  data_track <-list()
-  
-  # Oracle computation
-  mu_selected <- matrix(0, nrow = K, ncol = N)
-  if (dynamics == "common") {
-    for (i in 1:K) {
-      for (t in 1:N) {
-        mu_selected[i, t] <- mu[i, z_true[t] + 1]
-      }
-    }
-  } else {
-    for (i in 1:K) {
-      for (t in 1:N) {
-        mu_selected[i, t] <- mu[i, z_true[i, t] + 1]
-      }
-    }
-  }
-  oracle_arm <- apply(mu_selected, 2, which.max)
-  
-  # Initialization
-  selected_arms[1] <- sample(1:K, 1)
-  observed_data <- matrix(NA, nrow = K, ncol = N)
-  observed_data[selected_arms[1], 1] <- y_true[selected_arms[1], 1]
-  received_rewards[1] <- y_true[selected_arms[1], 1]
-  
-  regret[1] <- mu_selected[oracle_arm[1], 1] - 
-    if (dynamics == "common") mu[selected_arms[1], z_true[1] + 1] else mu[selected_arms[1], z_true[selected_arms[1], 1] + 1]
-  
-  # TS loop
+# we generate a full observability setting where model can use all information
   for (t in 2:N) {
-    sampled_values <- numeric(K)
     
-    if (sum(!is.na(observed_data)) >= K * 2 && t %% batch_size == 0) {
+    if (t %% batch_size == 0) {
       data_list <- list(
-        y_obs = observed_data[, 1:(t-1)],
+        y_obs = y_global[, 1:(t-1)],
         K = K,
         N = t - 1
       )
       
       data_track[[t/batch_size]] <- data_list
-      model <- jags.model(model_path, data = data_list, n.chains = 1, quiet = TRUE)
-      update(model, burn)
-      post <- coda.samples(model, c("mu", "pi", paste0("z[", t - 1, "]")), n.iter = n_iter)
-      post_matrix <- as.matrix(post)
-      message(glue::glue("[{Sys.time()}] Performed inference at time step {t}"))
     }
-    
-    if (is.matrix(post_matrix)) {
-      idx <- sample(1:nrow(post_matrix), 1)
-      pi0 <- post_matrix[idx, "pi[1]"]
-      pi1 <- post_matrix[idx, "pi[2]"]
-      if (t %% batch_size == 0) {
-        z_last <- post_matrix[idx, paste0("z[", t - 1, "]")]
-      }
-      sampled_pi <- ifelse(z_last == 0, pi0, pi1)
-      z_t <- rbinom(1, 1, prob = sampled_pi)
-      z_last <- z_t
-    }
-    
-    # Arm selection
-    for (i in 1:K) {
-      if (is.matrix(post_matrix)) {
-        mu0 <- post_matrix[idx, paste0("mu[", i, ",1]")]
-        mu1 <- post_matrix[idx, paste0("mu[", i, ",2]")]
-        sampled_values[i] <- (1 - z_t) * mu0 + z_t * mu1
-      } else {
-        sampled_values[i] <- runif(1)
-      }
-    }
-    
-    selected_arms[t] <- which.max(sampled_values)
-    r_t <- y_true[selected_arms[t], t]
-    received_rewards[t] <- r_t
-    observed_data[selected_arms[t], t] <- r_t
-    
-    true_z <- if (dynamics == "common") z_true[t] else z_true[selected_arms[t], t]
-    regret[t] <- mu_selected[oracle_arm[t], t] - mu[selected_arms[t], true_z + 1]
   }
 ```
+
+Now we do the inference for an increasing number of observations:
+
 ```{r}
-
-
 # Parameters
 param_names <- c("mu", "pi")
 
@@ -195,9 +132,9 @@ for (i in seq_along(data_track)) {
   cat("Running model for dataset", i, "\n")
   
   model <- jags.model(model_path, data = data_track[[i]], n.chains = 1, quiet = TRUE)
-  update(model, burn)
+  update(model, burn) # we set 1 burn in sample as example
   
-  post <- coda.samples(model, variable.names = param_names, n.iter = n_iter)
+  post <- coda.samples(model, variable.names = param_names, n.iter = n_iter) 
   
   # Convert to ggmcmc data frame and tag with dataset id
   gg_data <- ggs(post)
@@ -208,39 +145,52 @@ for (i in seq_along(data_track)) {
 # Combine all datasets
 gg_data_combined <- bind_rows(gg_data_all)
 
-# Plot traceplots with faceting by parameter and coloring by dataset
-ggplot(gg_data_combined, aes(x = Iteration, y = value, color = dataset)) +
-  geom_line(alpha = 0.7, size = 0.9) +
-  facet_wrap(~Parameter, scales = "free_y") +
-  labs(
-    title = "Traceplots Across JAGGS Runs",
-    x = "Sample",
-    y = "Parameter Value"
-  ) +
-  theme_classic(base_size = 12) +
-  theme(
-    legend.position = "bottom",
-    legend.title = element_blank()
-  )
-
 ```
 
-
-
-
+Now we compute the mean of the posterior samples
 ```{r}
-
 means_df <- gg_data_combined %>%
+  filter(Iteration > 1000) %>% 
   mutate(run = as.integer(gsub("Dataset ", "", dataset))) %>%
-  group_by(run, Parameter) %>%
+  group_by(Chain, Parameter,run) %>%
   summarise(mean_value = mean(value), .groups = "drop")
 
-ggplot(means_df, aes(x = run, y = mean_value)) +
-  geom_line(alpha = 0.7, size = 0.9, color = 'black') +
+unique_runs <- unique(means_df$run)
+
+for (r in unique_runs) {
+  
+  mu11 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[1,1]"]
+  mu12 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[1,2]"]
+  mu21 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[2,1]"]
+  mu22 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[2,2]"]
+  
+  if (mu11 < mu12) {
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[1,1]"] <- mu12
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[1,2]"] <- mu11
+  }
+  
+  if (mu22 < mu21) {
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[2,2]"] <- mu21
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu[2,1]"] <- mu22
+  }
+  
+  
+}
+
+ref_lines <- data.frame(
+  Parameter = c("mu[1,1]", "mu[1,2]","mu[2,1]","mu[2,2]", "pi[1]", "pi[2]"),
+  ref_value = c(mu[1,1],mu[1,2],mu[2,1],mu[2,2], pi_global[1,2], pi_global[2,2])  # your true values
+)
+
+
+global_means<-ggplot(means_df, aes(x = run, y = mean_value)) +
+  geom_line(alpha = 0.7, linewidth = 0.9, color = 'black') +
+  geom_hline(data = ref_lines, aes(yintercept = ref_value), 
+             linetype = "dashed", color = "red") +
   facet_wrap(~ Parameter, scales = "free_y") +
   labs(
-    title = "Posterior Means of Parameters Across Runs",
-    x     = "Run (batch index)",
+    #title = "Posterior Means of Parameters Across Runs",
+    x     = "Batch Index",
     y     = "Posterior Mean"
   ) +
   theme_classic(base_size = 12) +
@@ -248,51 +198,45 @@ ggplot(means_df, aes(x = run, y = mean_value)) +
     legend.position = "none"
   )
 
-#pis here look good but not the mus
+ggsave(file.path(output_dir, "global_means.png"), plot = global_means, width = 8, height = 6, dpi = 300)
+
 ```
 
 
-
-
-```{r}
-# the issue above was that mus are getting mixed up to i set the lower ones together and the high ones together
-tidy_means <- means_df %>%
-  filter(str_detect(Parameter, "^mu")) %>%
-  extract(Parameter,
-          into = c("what","arm","state"),
-          regex = "(mu)\\[(\\d+),(\\d+)\\]") %>%
-  mutate(across(c(arm, state), as.integer))  
-
-relabeled <- tidy_means %>%
-  group_by(run, arm) %>%
-  arrange(mean_value) %>%
-  mutate(rel_state = row_number()) %>%
-  ungroup() %>%
-  mutate(newParam = paste0("mu[", arm, ",", rel_state, "]"))
-
-plot_df <- relabeled %>%
-  select(run, Parameter = newParam, mean_value)
-
-ggplot(plot_df, aes(x = run, y = mean_value)) +
-  geom_line(alpha = 0.7, size = 0.9, color = 'black') +
-  facet_wrap(~ Parameter, scales = "free_y") +
-  labs(
-    title = "Posterior Means of Parameters Across Runs\n(label-switched corrected)",
-    x     = "Run (batch index)",
-    y     = "Posterior Mean"
-  ) +
-  theme_classic(base_size = 12) +
-  theme(legend.position = "none")
-```
-
-
+Now we plot the trace plots for the last batch:
 
 ```{r}
-ggplot(gg_data_all[[length(gg_data_all)]], aes(x = Iteration, y = value)) +
+
+last_gg_data <- gg_data_all[[length(gg_data_all)]]
+
+unique_it <- unique(last_gg_data$Iteration)
+
+for (r in unique_it) {
+  
+  mu11 <- last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[1,1]"]
+  mu12 <- last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[1,2]"]
+  mu21 <- last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[2,1]"]
+  mu22 <- last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[2,2]"]
+  
+  if (mu11 < mu12) {
+    last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[1,1]"] <- mu12
+    last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[1,2]"] <- mu11
+  }
+  
+  if (mu22 < mu21) {
+    last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[2,2]"] <- mu21
+    last_gg_data$value[last_gg_data$Iteration == r & last_gg_data$Parameter == "mu[2,1]"] <- mu22
+  }
+  
+  
+}
+
+global_last<-ggplot(last_gg_data, aes(x = Iteration, y = value)) +
   geom_line(alpha = 0.7, size = 0.9, color = 'black') +
+   geom_hline(data = ref_lines, aes(yintercept = ref_value), 
+             linetype = "dashed", color = "red") +
   facet_wrap(~Parameter, scales = "free_y") +
   labs(
-    title = "Parameter Traceplots after JAGGS run with 10000 samples",
     x = "Sample",
     y = "Parameter Value"
   ) +
@@ -301,7 +245,116 @@ ggplot(gg_data_all[[length(gg_data_all)]], aes(x = Iteration, y = value)) +
     legend.position = "none"
   )
 
+ggsave(file.path(output_dir, "global_last.png"), plot = global_last, width = 8, height = 6, dpi = 300)
 ```
+
+We check if state sequence is well infered:
+```{r}
+burn = 1000
+n_iter = 200
+
+# Parameters
+z_names <- paste0("z[", 1:data_track[[length(data_track)]]$N, "]")
+param_names <- c("mu", "pi",z_names)
+
+model <- jags.model(model_path, data = data_track[[length(data_track)]], n.chains = 1, quiet = TRUE)
+update(model, burn) 
+  
+post <- coda.samples(model, variable.names = param_names, n.iter = n_iter) 
+```
+
+```{r}
+posterior_matrix <- as.matrix(post)
+# Extract only the columns that match "z["
+z_cols <- grep("^z\\[", colnames(posterior_matrix), value = TRUE)
+
+# Compute means for each z[i]
+z_means <- colMeans(posterior_matrix[, z_cols])
+
+# Extract numeric indices from names like "z[1]", "z[2]", ...
+z_indices <- as.numeric(gsub("z\\[(\\d+)\\]", "\\1", names(z_means)))
+
+# Order by index
+ordered_means <- z_means[order(z_indices)]
+
+df <- data.frame(
+  i = sort(z_indices),
+  mean_z = ordered_means
+)
+
+ggplot(df, aes(x = i, y = mean_z)) +
+  geom_point() +
+  labs(x = "Time", y = "State ") +
+  theme_minimal()
+
+df_true <- data.frame(i = seq_along(z_global), value = z_global)
+```
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+# -------------------------------------------------------------------
+# Assume:
+#   • `post` is a coda::mcmc or mcmc.list object containing samples with columns "z[1]", "z[2]", ..., "z[N]".
+#   • `z_global` is a length-N vector of true latent states.
+#   • `N` is the length of `z_global`.
+# -------------------------------------------------------------------
+
+# 1) Convert MCMC object `post` to a plain matrix:
+posterior_matrix <- as.matrix(post)
+
+# 2) Pick out only the “z[t]” columns and compute their posterior means:
+z_cols   <- grep("^z\\[", colnames(posterior_matrix), value = TRUE)
+z_means  <- colMeans(posterior_matrix[, z_cols, drop = FALSE])
+
+# 3) Recover integer “t” from names like "z[7]" → 7:
+z_indices     <- as.integer(gsub("^z\\[(\\d+)\\]$", "\\1", names(z_means)))
+ordering      <- order(z_indices)
+ordered_idx   <- z_indices[ordering]
+ordered_means <- z_means[ordering]
+
+# 4) Build a data.frame for posterior‐mean predictions:
+df_post <- data.frame(
+  Time  = ordered_idx,
+  MeanZ = ordered_means
+)
+
+# 5) Build a data.frame for the true latent sequence:
+df_true <- data.frame(
+  Time  = seq_len(N),
+  TrueZ = z_global
+)
+
+# 6A) “Posterior Mean” plot (no grid background, larger title)
+p_post <- ggplot(df_post, aes(x = Time, y = MeanZ)) +
+  geom_point(color = "black", size = 1) +
+  labs(
+    title = "Posterior Mean of P(z[t] = 1)",
+    x     = "Time",
+    y     = "Predicted State"
+  ) +
+  theme_classic(base_size = 12) 
+
+# 6B) “True State” plot (no grid background, larger title)
+p_true <- ggplot(df_true, aes(x = Time, y = TrueZ)) +
+  geom_point(color = "black", size = 1) +
+  labs(
+    title = "True Latent State z[t]",
+    x     = "Time",
+    y     = "True State"
+  ) +
+  theme_classic(base_size = 12) 
+
+# 7) Arrange side by side
+grid.arrange(
+  p_post,
+  p_true,
+  ncol = 2
+)
+```
+
+
+
 # The Local Setup
 
 Transition Probabilities (one per arm):
@@ -340,144 +393,342 @@ z_local <- truth$z
 ```
 
 
+Inference with full observability:
 ```{r}
+library(rjags)
+library(coda)
+library(ggmcmc)
 
 model_path <- poor_model_path
-batch_size <- 10
-burn       <- 1000
-n_iter     <- 200
+batch_size <- 100
+burn       <- 1
+n_iter     <- 1200
 
-K      <- nrow(mu)
-N      <- 1000
-y_true <- y_local
-
-selected_arms    <- integer(N)
-received_rewards <- numeric(N)
-regret           <- numeric(N)
-observed_data    <- matrix(NA_real_, nrow=K, ncol=N)
-
-# oracle: best arm per (i,t)
-mu_selected <- matrix(0, nrow=K, ncol=N)
-for (i in 1:K) {
-  for (t in 1:N) {
-    mu_selected[i,t] <- mu[i, z_local[i,t] + 1]
-  }
-}
-oracle_arm <- max.col(t(mu_selected))
-
-selected_arms[1]    <- sample(K,1)
-observed_data[selected_arms[1],1] <- y_true[selected_arms[1],1]
-received_rewards[1] <- y_true[selected_arms[1],1]
-regret[1]           <- mu_selected[oracle_arm[1],1] -
-                       mu[selected_arms[1], z_local[selected_arms[1],1] + 1]
+K <- nrow(mu)     
+N <- 10000
+n_batches <- floor(N / batch_size)
 
 
-z_last <- z_local[,1]
-post_matrix <- NULL
-
-for (t in 2:N) {
-  sampled_values <- numeric(K)
-
-  if (is.matrix(post_matrix)) {
-    idx <- sample(nrow(post_matrix),1)
-    for (i in 1:K) {
-      mu0_i <- post_matrix[idx, "mu0"]
-      mu1_i <- post_matrix[idx, "mu1"]
-      sampled_values[i] <- (1 - z_last[i])*mu0_i + z_last[i]*mu1_i
-      # update latent
-      p1 <- post_matrix[idx, "pi[2]"] * z_last[i] +
-            post_matrix[idx, "pi[1]"] * (1-z_last[i])
-      z_last[i] <- rbinom(1,1,p1)
-    }
-  } else {
-    sampled_values <- runif(K)
-  }
-
-  a_t               <- which.max(sampled_values)
-  selected_arms[t]  <- a_t
-  r_t               <- y_true[a_t, t]
-  received_rewards[t]   <- r_t
-  observed_data[a_t, t] <- r_t
-
-  # regret
-  regret[t] <- mu_selected[oracle_arm[t], t] -
-               mu[a_t, z_local[a_t,t] + 1]
-}
+gg_data_all <- vector("list", length = n_batches)
 
 
-records <- list()
-for (b in seq_len(floor(N/batch_size))) {
-  end   <- b * batch_size
-  for (i in 1:K) {
-    obs_idx <- which(!is.na(observed_data[i,1:end]))
-    y_i     <- observed_data[i, obs_idx]
-    N_i     <- length(y_i)
-    if (N_i < 2) next
+for (t in seq_len(N)) {
+  if (t %% batch_size == 0) {
+    batch_index <- t / batch_size
+    cat("Running batch", batch_index, "(data up to time step", t - 1, ")\n")
     
-    data_i <- list(y = y_i, N = N_i)
-    m      <- jags.model(
-      file     = model_path,
-      data     = data_i,
-      n.chains = 1,
-      quiet    = TRUE
-    )
-    update(m, burn)
-    post <- coda.samples(
-      m,
-      variable.names = c("mu0","mu1","pi[1]","pi[2]"),
-      n.iter         = n_iter
-    )
-    df <- ggs(post) %>%
-      mutate(batch = b, arm = i)
-    records[[length(records)+1]] <- df
+    arm_results <- vector("list", length = K)
+    for (k in seq_len(K)) {
+      data_list <- list(
+        y = y_local[k, 1:(t - 1)],  # all rewards of arm k up to time t–1
+        N = t - 1
+      )
+      model_k <- rjags::jags.model(
+        file     = model_path,
+        data     = data_list,
+        n.chains = 1,
+        quiet    = TRUE
+      )
+      update(model_k, burn)
+
+      post_k <- rjags::coda.samples(
+        model          = model_k,
+        variable.names = c("mu0", "mu1", "pi"),
+        n.iter         = n_iter
+      )
+
+      gg_k       <- ggs(post_k)
+      gg_k$dataset <- paste0("Dataset ", batch_index)
+      gg_k$arm     <- k
+
+      arm_results[[k]] <- gg_k
+    }
+    
+    gg_data_all[[batch_index]] <- arm_results
   }
 }
 
-gg_data <- bind_rows(records) %>%
-  mutate(
-    Parameter = case_when(
-      Parameter=="mu0"    ~ paste0("mu[", arm, ",1]"),
-      Parameter=="mu1"    ~ paste0("mu[", arm, ",2]"),
-      TRUE                ~ Parameter
-    )
-  )
+gg_data_k1 <- vector("list", length = n_batches)
+gg_data_k2 <- vector("list", length = n_batches)
 
-means_df <- gg_data %>%
-  group_by(batch, Parameter) %>%
-  summarise(mean_value = mean(value), .groups="drop") %>%
-  filter(str_detect(Parameter, "^mu"))
-
-tidy_means <- means_df %>%
-  extract(
-    Parameter,
-    into    = c("arm","state"),
-    regex   = "mu\\[(\\d+),(\\d+)\\]",
-    convert = TRUE
-  ) %>%
-  group_by(batch, arm) %>%
-  arrange(mean_value) %>%
-  mutate(state2 = row_number()) %>%
-  ungroup() %>%
-  mutate(
-    Parameter = paste0("mu[", arm, ",", state2, "]")
-  )
-
-plot_df <- select(tidy_means, batch, Parameter, mean_value)
-
-
+for (b in seq_len(n_batches)) {
+  gg_data_k1[[b]] <- gg_data_all[[b]][[1]]
+  gg_data_k2[[b]] <- gg_data_all[[b]][[2]]
+}
 ```
+
 ```{r}
-ggplot(plot_df, aes(x = batch, y = mean_value)) +
-  geom_line(size = 0.9, color = "black", alpha = 0.7) +
-  facet_wrap(~ Parameter, scales = "free_y", ncol = 1) +
+gg_data_k1
+```
+
+
+
+```{r}
+
+gg_data_combined1 <- bind_rows(gg_data_k1)
+
+
+means_df <- gg_data_combined1 %>%
+  filter(Iteration > 1000) %>% 
+  mutate(run = as.integer(gsub("Dataset ", "", dataset))) %>%
+  group_by(run, Chain, Parameter) %>%
+  summarise(mean_value = mean(value), .groups = "drop")
+
+unique_runs <- unique(means_df$run)
+
+for (r in unique_runs) {
+  
+  mu0 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu0"]
+  mu1 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu1"]
+  
+  if (mu0 < mu1) {
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu0"] <- mu1
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu1"] <- mu0
+  }
+}
+
+ref_lines1 <- data.frame(
+  Parameter = c("mu0", "mu1", "pi[1]", "pi[2]"),
+  ref_value = c(mu[1,1],mu[1,2], pi_list[[1]][1,2], pi_list[[1]][2,2])  # your true values
+)
+
+local_means_arm1<-ggplot(means_df, aes(x = run, y = mean_value)) +
+  geom_line(alpha = 0.7, size = 0.9, color = 'black') +
+  geom_hline(data = ref_lines1, aes(yintercept = ref_value), 
+             linetype = "dashed", color = "red") +
+  facet_wrap(~ Parameter, scales = "free_y") +
   labs(
-    title = "Independent (Poor) Model: Posterior Means by Batch",
-    x     = "Batch index",
+    x     = "Run (batch index)",
     y     = "Posterior Mean"
   ) +
   theme_classic(base_size = 12) +
-  theme(legend.position = "none")
+  theme(
+    legend.position = "none"
+  )
+
+ggsave(file.path(output_dir, "local_means_arm1.png"), plot = local_means_arm1, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+local_means_arm1
 ```
 
 
+```{r}
+
+gg_data_combined2 <- bind_rows(gg_data_k2)
+
+
+means_df <- gg_data_combined2 %>%
+  filter(Iteration > 1000) %>% 
+  mutate(run = as.integer(gsub("Dataset ", "", dataset))) %>%
+  group_by(run, Chain, Parameter) %>%
+  summarise(mean_value = mean(value), .groups = "drop")
+
+unique_runs <- unique(means_df$run)
+
+for (r in unique_runs) {
+  
+  mu0 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu0"]
+  mu1 <- means_df$mean_value[means_df$run == r & means_df$Parameter == "mu1"]
+  
+  if (mu0 < mu1) {
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu0"] <- mu1
+    means_df$mean_value[means_df$run == r & means_df$Parameter == "mu1"] <- mu0
+  }
+}
+
+ref_lines2 <- data.frame(
+  Parameter = c("mu0", "mu1", "pi[1]", "pi[2]"),
+  ref_value = c(mu[2,1],mu[2,2], pi_list[[2]][1,2], pi_list[[2]][2,2])  # your true values
+)
+
+local_means_arm2<-ggplot(means_df, aes(x = run, y = mean_value)) +
+  geom_line(alpha = 0.7, size = 0.9, color = 'black') +
+  geom_hline(data = ref_lines1, aes(yintercept = ref_value), 
+             linetype = "dashed", color = "red") +
+  facet_wrap(~ Parameter, scales = "free_y") +
+  labs(
+    x     = "Run (batch index)",
+    y     = "Posterior Mean"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "none"
+  )
+
+ggsave(file.path(output_dir, "local_means_arm2.png"), plot = local_means_arm2, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+local_means_arm2
+```
+
+
+
+We check if state sequence is well infered:
+```{r}
+posts <- vector("list", length = K)
+for (k in seq_len(K)) {
+  cat("Inferring z[ ] for arm", k, "\n")
+  
+  data_list_k <- list(
+    y = y_local[k, 1:N],
+    N = N
+  )
+  
+  model_k <- rjags::jags.model(
+    file     = poor_model_path,
+    data     = data_list_k,
+    n.chains = 1,
+    quiet    = TRUE
+  )
+  update(model_k, burn)
+  
+  # request all z[1:N] + mu0, mu1, pi
+  z_names_k     <- paste0("z[", 1:N, "]")
+  param_names_k <- c("mu0", "mu1", "pi", z_names_k)
+  
+  post_k <- rjags::coda.samples(
+    model          = model_k,
+    variable.names = param_names_k,
+    n.iter         = n_iter
+  )
+  posts[[k]] <- post_k
+}
+```
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+
+all_plots <- list()
+
+for (k in seq_len(K)) {
+
+  post_k           <- posts[[k]]
+  posterior_matrix <- as.matrix(post_k)
+
+  z_cols   <- grep("^z\\[", colnames(posterior_matrix), value = TRUE)
+  z_means  <- colMeans(posterior_matrix[, z_cols, drop = FALSE])
+
+  z_indices   <- as.integer(sub("^z\\[(\\d+)\\]$", "\\1", names(z_means)))
+  ordering    <- order(z_indices)
+  ordered_idx <- z_indices[ordering]
+  ordered_means <- z_means[ordering]
+
+  truth_seq   <- z_local[k, ordered_idx]
+  correlation <- cor(ordered_means, truth_seq)
+  if (!is.na(correlation) && correlation < 0) {
+    ordered_means <- 1 - ordered_means
+  }
+
+  df_post <- data.frame(
+    Time  = ordered_idx,
+    MeanZ = ordered_means
+  )
+  df_true <- data.frame(
+    Time  = seq_len(N),
+    TrueZ = z_local[k, ]
+  )
+
+  p_post <- ggplot(df_post, aes(x = Time, y = MeanZ)) +
+    geom_point(color = "black", size = 1) +
+    labs(
+      title = paste0("Arm ", k, ": Posterior Mean of P(z[t]=1)"),
+      plot.title   = element_text(size = 9),
+      x     = "Time t",
+      y     = expression(P(z[t] == 1 ~"|"~ data))
+    ) +
+    theme_classic(base_size = 12)
+
+  p_true <- ggplot(df_true, aes(x = Time, y = TrueZ)) +
+    geom_point(color = "black", size = 0.8) +
+    labs(
+      title = paste0("Arm ", k, ": True z[t]"),
+      x     = "Time t",
+      y     = "z[t]"
+    ) +
+    theme_classic(base_size = 12)
+
+
+  all_plots[[2*k - 1]] <- p_post
+  all_plots[[2*k    ]] <- p_true
+}
+
+grid.arrange(
+  grobs = all_plots,
+  ncol  = 2
+)
+```
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+
+all_plots <- list()
+
+for (k in seq_len(K)) {
+  post_k           <- posts[[k]]
+  posterior_matrix <- as.matrix(post_k)
+
+  z_cols   <- grep("^z\\[", colnames(posterior_matrix), value = TRUE)
+  z_means  <- colMeans(posterior_matrix[, z_cols, drop = FALSE])
+
+  z_indices   <- as.integer(sub("^z\\[(\\d+)\\]$", "\\1", names(z_means)))
+  ordering    <- order(z_indices)
+  ordered_idx <- z_indices[ordering]
+  ordered_means <- z_means[ordering]
+
+  truth_seq   <- z_local[k, ordered_idx]
+  correlation <- cor(ordered_means, truth_seq)
+  if (!is.na(correlation) && correlation < 0) {
+    ordered_means <- 1 - ordered_means
+  }
+
+  ordered_means <- round(ordered_means)
+
+  df_post <- data.frame(
+    Time  = ordered_idx,
+    MeanZ = ordered_means
+  )
+  df_true <- data.frame(
+    Time  = seq_len(N),
+    TrueZ = z_local[k, ]
+  )
+
+  p_post <- ggplot(df_post, aes(x = Time, y = MeanZ)) +
+    geom_point(color = "black", size = 1) +
+    labs(
+      title = paste0("Arm ", k, ": Posterior Mean of P(z[t]=1)"),
+      x     = "Time t",
+      y     = expression(P(z[t] == 1 ~"|"~ data))
+    ) +
+    theme_classic(base_size = 12) +
+    theme(
+      plot.title = element_text(size = 10) 
+    )
+
+  p_true <- ggplot(df_true, aes(x = Time, y = TrueZ)) +
+    geom_point(color = "black", size = 0.8) +
+    labs(
+      title = paste0("Arm ", k, ": True z[t]"),
+      x     = "Time t",
+      y     = "z[t]"
+    ) +
+    theme_classic(base_size = 12) +
+    theme(
+      plot.title = element_text(size = 10)  
+    )
+
+  all_plots[[2*k - 1]] <- p_post
+  all_plots[[2*k    ]] <- p_true
+}
+
+grid.arrange(
+  grobs = all_plots,
+  ncol  = 2
+)
+```
 
