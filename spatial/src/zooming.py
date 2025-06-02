@@ -13,27 +13,32 @@ import numpy as np
 from PyXAB.algos.Algo import Algorithm
 from PyXAB.partition.Node import P_node
 from PyXAB.partition.BinaryPartition import BinaryPartition
+from scipy.spatial import KDTree
 
 
+
+# -----------------------------------
+# completely corrected by Marvin Ernst (2025)
 class point:
-    """
-    A helper class to use points as references
-    """
-
     def __init__(self, p):
-        self.p = p
-        self.locked_in_step = None # added by Marvin Ernst (2025)
+        self.p = tuple(np.round(p, 8))  # ensure hash stability
 
     def get_point(self):
-        return self.p
+        return np.array(self.p)
 
+    def __hash__(self):
+        return hash(self.p)
+
+    def __eq__(self, other):
+        return self.p == other.p
+# -----------------------------------
 
 class Zooming(Algorithm):
     """
     The implementation of the Zooming algorithm
     """
 
-    def __init__(self, nu=1, rho=0.9, domain=None, partition=BinaryPartition, scoring_method="ucb", reward_type=None): # edited by Marvin Ernst (2025)
+    def __init__(self, nu=1, rho=0.9, domain=None, partition=BinaryPartition, scoring_method="ucb", reward_type=None, min_pulls_before_zoom=5): # edited by Marvin Ernst (2025)
         """
         Initialization of the Zooming algorithm
 
@@ -53,6 +58,8 @@ class Zooming(Algorithm):
             The method for scoring arms ("ucb", "tuned_ucb", "ts")
         reward_type: str
             The type of reward distribution ("gaussian", "bernoulli")
+        min_pulls_before_zoom: int
+            Minimum number of pulls before zooming in on a node
         """
 
         super(Zooming, self).__init__()
@@ -70,8 +77,13 @@ class Zooming(Algorithm):
         self.time = 0
 
         self.best_arm = None
-        self.scoring_method = scoring_method # added by Marvin Ernst (2025)
-        self.reward_type = reward_type # also added by Marvin Ernst (2025)
+        # ----------------------------
+        # Added by Marvin Ernst (2025)
+        self.scoring_method = scoring_method 
+        self.reward_type = reward_type
+        self.arms = None  # For discrete-arm search
+        self.f = None  # Reward function handle
+        # ----------------------------
 
         self.active_points = {}
         self.pulled_times = {}
@@ -90,6 +102,8 @@ class Zooming(Algorithm):
         for child in self.partition.get_layer_node_list(depth=1):
             self.make_active(child)
 
+        self.min_pulls_before_zoom = min_pulls_before_zoom
+
     def make_active(self, node):
         """
         The function to make a node (an arm in the node) active
@@ -102,8 +116,22 @@ class Zooming(Algorithm):
         Returns
         -------
         """
-
-        active_arm = point(node.get_cpoint())
+        # ----------------------------
+        # Edited by Marvin Ernst (2025)
+        # Replacement for discrete-arm search: choose best arm in node's domain, else use center
+        if hasattr(self, "arms") and hasattr(self, "tree"):
+            # Find best arm within this node's domain
+            domain = node.get_domain()
+            mask = np.all((self.arms >= [d[0] for d in domain]) & (self.arms <= [d[1] for d in domain]), axis=1)
+            candidate_arms = self.arms[mask]
+            if len(candidate_arms) > 0:
+                best_arm = candidate_arms[np.argmax([self.f(a) for a in candidate_arms])]
+                active_arm = point(best_arm)
+            else:
+                active_arm = point(node.get_cpoint())
+        else:
+            active_arm = point(node.get_cpoint())
+        # ----------------------------
         self.active_points[active_arm] = node
         self.pulled_times[active_arm] = 0
         # ----------------------------
@@ -150,14 +178,14 @@ class Zooming(Algorithm):
             if self.scoring_method == "ucb":
                 # originally which is should be for the bernoulli rewards, it was:
                 # bonus = 2 * np.sqrt(8 * self.phase / (2 + pulls))
-                bonus = np.sqrt((2 * np.log(self.time + 1)) / (pulls + 1e-6))
+                bonus = np.sqrt((2 * np.log(time + 1)) / (pulls + 1e-6))
                 score = mean + bonus
             elif self.scoring_method == "tuned_ucb":
                 # Gaussian variance estimate
                 rewards_squared = self.squared_rewards[arm]
                 mean_square = rewards_squared / pulls if pulls > 0 else 0
                 variance_estimate = max(0.0, mean_square - mean**2)
-                bonus = np.sqrt((np.log(self.time + 1) / (pulls + 1e-6)) * min(0.25, variance_estimate + np.sqrt((2 * np.log(self.time + 1)) / (pulls + 1e-6))))
+                bonus = np.sqrt((np.log(time + 1) / (pulls + 1e-6)) * min(0.25, variance_estimate + np.sqrt((2 * np.log(time + 1)) / (pulls + 1e-6))))
                 score = mean + bonus
             elif self.scoring_method == "ts":
                 if self.reward_type == "bernoulli":
@@ -212,11 +240,25 @@ class Zooming(Algorithm):
         if self.time >= self.next_end_time:
             self.phase += 1
             self.next_end_time += 2 ** self.phase
-
-        parent = self.active_points[self.best_arm]
+        # ----------------------------
+        # Modified by Marvin Ernst (2025)
+        parent = self.active_points.get(self.best_arm)
+        if parent is None:
+            # Try to reconstruct the point key using tuple rounding
+            self.best_arm = point(np.round(self.best_arm.get_point(), 8))
+            parent = self.active_points[self.best_arm]
+        # ----------------------------
         if (
             np.sqrt(8 * self.phase / (2 + self.pulled_times[self.best_arm]))
             <= self.nu * self.rho ** parent.get_depth()
+             # ----------------------------
+            # Added by Marvin Ernst (2025)
+            and self.pulled_times[self.best_arm] >= self.min_pulls_before_zoom
+            and all(
+                self.pulled_times.get(tuple(child.get_cpoint()), 0) >= self.min_pulls_before_zoom
+                for child in (parent.get_children() or [])
+            )
+            # ----------------------------
         ):
             # ----------------------------
             # Added by Marvin Ernst (2025)
@@ -268,7 +310,7 @@ class Zooming(Algorithm):
         """
 
         return self.pull(0)
-    
+
 # -------------------------------------------------------------------------
 """
 Added by Marvin Ernst (2025)
@@ -278,30 +320,27 @@ Added by Marvin Ernst (2025)
 # selected by the Zooming algorithm. - for discrete arms:
 
 class DiscreteZoomingWrapper:
-    def __init__(self, f, arms, domain=[[0, 1], [0, 1]], nu=1, rho=0.9, scoring_method="ucb", reward_type="gaussian"):
-        """
-        Wraps the continuous Zooming algorithm for use in a discrete-arm bandit setting.
-
-        Parameters
-        ----------
-        f : function
-            Ground truth reward function used for evaluation.
-        arms : np.ndarray
-            Array of shape (K, d) representing K discrete arms in d-dimensional space.
-        domain : list of list
-            The continuous domain over which Zooming is defined, default is 2D unit square.
-        nu : float
-            Smoothness parameter for the Zooming algorithm.
-        rho : float
-            Shrinking factor for spatial refinement.
-        scoring_method : str
-            The method for scoring arms ("ucb", "tuned_ucb", "ts")
-        reward_type : str
-            The type of reward distribution ("gaussian", "bernoulli")
-        """
-        self.arms = np.array(arms)
-        self.zoom = Zooming(nu=nu, rho=rho, domain=domain, scoring_method=scoring_method, reward_type=reward_type)
+    def __init__(self, f, arms, nu, rho, domain, scoring_method="ucb", reward_type=None, min_pulls_before_zoom=5):
         self.f = f
+        self.arms = arms
+        self.nu = nu
+        self.rho = rho
+        self.domain = domain
+        self.scoring_method = scoring_method
+        self.reward_type = reward_type
+        self.min_pulls_before_zoom = min_pulls_before_zoom
+        self.zoom = Zooming(
+            nu=self.nu,
+            rho=self.rho,
+            domain=self.domain,
+            scoring_method=self.scoring_method,
+            reward_type=self.reward_type,
+            min_pulls_before_zoom=self.min_pulls_before_zoom
+        )
+        self.zoom.f = self.f
+        self.zoom.arms = self.arms
+        self.zoom.tree = KDTree(self.arms)
+        self.tree = KDTree(self.arms)
 
     def select_arm(self, t):
         """
@@ -318,12 +357,19 @@ class DiscreteZoomingWrapper:
             The selected arm's coordinates.
         """
         x = self.zoom.pull(t)
-        idx = np.argmin(np.linalg.norm(self.arms - np.array(x), axis=1))
-        self.last_selected_point = x  
+        _, idx = self.tree.query(x)
+        self.last_selected_point = x
         return self.arms[idx]
 
     def get_selected_index(self):
-        return np.argmin(np.linalg.norm(self.arms - np.array(self.last_selected_point), axis=1))
+        _, idx = self.tree.query(self.last_selected_point)
+        return idx
 
     def update(self, arm_idx, reward):
         self.zoom.receive_reward(self.zoom.time, reward)
+
+    def receive_reward(self, t, reward):
+        self.zoom.receive_reward(t, reward)
+
+
+

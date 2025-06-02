@@ -31,7 +31,8 @@ def generate_ground_truth(K=10, d=2, sigma=0.1, random_state=None,
             if use_bernoulli:
                 return rng.binomial(1, p=np.clip(normalized, 0, 1))
             else:
-                return normalized
+                # Added Gaussian noise for stochastic Gaussian rewards:
+                return np.clip(normalized + rng.normal(0, sigma), 0, 1)
 
         return X, y, f
     else:
