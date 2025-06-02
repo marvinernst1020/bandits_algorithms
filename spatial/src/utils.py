@@ -20,14 +20,14 @@ def plot_cumulative_regret(df):
     
     # Define consistent colors
     color_mapping = {
-        "TS": "blue", "ZI-TS": "blue",
+        "TS": "grey", "ZI-TS": "blue",
         "UCB0": "green", "ZI-UCB0": "green",
         "UCB": "grey", "ZI-UCB1": "red",
     }
 
     # Define linestyles
     linestyle_mapping = {
-        "TS": "--", "ZI-TS": "-",
+        "TS": "-", "ZI-TS": "-",
         "UCB0": "--", "ZI-UCB0": "-",
         "UCB": "-", "ZI-UCB1": "-",
     }
@@ -49,6 +49,54 @@ def plot_cumulative_regret(df):
 
     plt.xlabel("Time Step")
     plt.ylabel("Average Cumulative Regret")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15),
+        ncol=len(algorithms),
+        frameon=False
+    )
+    plt.tight_layout()
+
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.show()
+
+def plot_cumulative_regret_s(df):
+    plt.figure(figsize=(8, 5))
+    
+    # Define consistent colors
+    color_mapping = {
+        "TS": "grey", "ZI-TS": "blue",
+        "UCB0": "green", "ZI-UCB0": "green",
+        "UCB": "grey", "ZI-UCB1": "red",
+    }
+
+    # Define linestyles
+    linestyle_mapping = {
+        "TS": "-", "ZI-TS": "-",
+        "UCB0": "--", "ZI-UCB0": "-",
+        "UCB": "-", "ZI-UCB1": "-",
+    }
+
+    # Sort algorithms for consistent legend order
+    algorithms = sorted(df["algorithm"].unique())
+
+    # Plot each algorithm individually for full control
+    for algo in algorithms:
+        algo_df = df[df["algorithm"] == algo]
+        sns.lineplot(
+            data=algo_df,
+            x="time",
+            y="avg_regret",
+            label=algo,
+            color=color_mapping.get(algo, "gray"),
+            linestyle=linestyle_mapping.get(algo, "-")
+        )
+
+    plt.xlabel("Time Step")
+    plt.ylabel("Cumulative Regret")
     plt.legend(
         title=None,
         loc="upper center",
@@ -99,6 +147,31 @@ def plot_instantaneous_regret(df, palette=None):
     )
     plt.xlabel("Time Step")
     plt.ylabel("Average Instantaneous Regret")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15),
+        ncol=len(df["algorithm"].unique()),
+        frameon=False
+    )
+    plt.tight_layout()
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.show()
+
+def plot_instantaneous_regret_s(df, palette=None):
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(
+        data=df,
+        x="time",
+        y="avg_inst_regret",
+        hue="algorithm",
+        palette=palette,
+        alpha=0.7  
+    )
+    plt.xlabel("Time Step")
+    plt.ylabel("Instantaneous Regret")
     plt.legend(
         title=None,
         loc="upper center",
