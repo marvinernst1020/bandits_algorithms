@@ -22,14 +22,14 @@ def plot_cumulative_regret(df):
     color_mapping = {
         "TS": "blue", "ZI-TS": "blue",
         "UCB0": "green", "ZI-UCB0": "green",
-        "UCB": "red", "ZI-UCB1": "red",
+        "UCB": "grey", "ZI-UCB1": "red",
     }
 
     # Define linestyles
     linestyle_mapping = {
         "TS": "--", "ZI-TS": "-",
         "UCB0": "--", "ZI-UCB0": "-",
-        "UCB": "--", "ZI-UCB1": "-",
+        "UCB": "-", "ZI-UCB1": "-",
     }
 
     # Sort algorithms for consistent legend order
