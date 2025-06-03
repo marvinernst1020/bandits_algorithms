@@ -95,17 +95,19 @@ def plot_cumulative_regret_zoom_s(df):
             linestyle=linestyle_mapping.get(algo, "-")
         )
 
+def plot_cumulative_regret_s_o(df, palette=None):
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(data=df, x="time", y="avg_regret", hue="algorithm", palette=palette)
     plt.xlabel("Time Step")
     plt.ylabel("Cumulative Regret")
     plt.legend(
         title=None,
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.15),
-        ncol=len(algorithms),
+        bbox_to_anchor=(0.5, -0.15), 
+        ncol=len(df["algorithm"].unique()),  
         frameon=False
     )
     plt.tight_layout()
-
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)

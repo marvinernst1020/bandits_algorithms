@@ -33,6 +33,12 @@ from .utils import (
     plot_instantaneous_regret,
     ensure_scalar, 
     plot_arm_positions,
+<<<<<<< Updated upstream
     plot_instantaneous_regret_s,
     plot_cumulative_regret_s
+=======
+    plot_cumulative_regret_s,
+    plot_instantaneous_regret_s,
+    plot_cumulative_regret_s_o
+>>>>>>> Stashed changes
 )
