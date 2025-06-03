@@ -32,5 +32,7 @@ from .utils import (
     plot_cumulative_regret_logit,
     plot_instantaneous_regret,
     ensure_scalar, 
-    plot_arm_positions
+    plot_arm_positions,
+    plot_instantaneous_regret_s,
+    plot_cumulative_regret_s
 )

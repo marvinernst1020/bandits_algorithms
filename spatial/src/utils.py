@@ -15,7 +15,7 @@ def plot_rewards(true_rewards, estimated_rewards):
     plt.show()
 
 
-def plot_cumulative_regret(df):
+def plot_cumulative_regret_zoom(df):
     plt.figure(figsize=(8, 5))
     
     # Define consistent colors
@@ -63,7 +63,7 @@ def plot_cumulative_regret(df):
     ax.spines['right'].set_visible(False)
     plt.show()
 
-def plot_cumulative_regret_s(df):
+def plot_cumulative_regret_zoom_s(df):
     plt.figure(figsize=(8, 5))
     
     # Define consistent colors
@@ -106,6 +106,42 @@ def plot_cumulative_regret_s(df):
     )
     plt.tight_layout()
 
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.show()
+
+def plot_cumulative_regret(df, palette=None):
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(data=df, x="time", y="avg_regret", hue="algorithm", palette=palette)
+    plt.xlabel("Time Step")
+    plt.ylabel("Average Cumulative Regret")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15), 
+        ncol=len(df["algorithm"].unique()),  
+        frameon=False
+    )
+    plt.tight_layout()
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.show()
+
+def plot_cumulative_regret_s(df, palette=None):
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(data=df, x="time", y="avg_regret", hue="algorithm", palette=palette)
+    plt.xlabel("Time Step")
+    plt.ylabel("Cumulative Regret")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15), 
+        ncol=len(df["algorithm"].unique()),  
+        frameon=False
+    )
+    plt.tight_layout()
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
