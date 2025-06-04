@@ -12,7 +12,7 @@
 
 ## Motivation
 
-Many real-world systems—from online platforms to adaptive control—require sequential decisions in uncertain environments where rewards evolve over time or depend on spatial features. This project explores how bandit algorithms can be enhanced to adapt to such non-stationarity, via hidden latent-state dynamics and spatial correlation among arms.
+Many real-world systems - from online platforms to adaptive control - require sequential decisions in uncertain environments where rewards evolve over time or depend on spatial features. This project explores how bandit algorithms can be enhanced to adapt to such non-stationarity, via hidden latent-state dynamics and spatial correlation among arms.
 
 ---
 
