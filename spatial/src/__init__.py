@@ -34,5 +34,7 @@ from .utils import (
     ensure_scalar, 
     plot_arm_positions,
     plot_instantaneous_regret_s,
-    plot_cumulative_regret_s
+    plot_cumulative_regret_s,
+    plot_distance_to_best_arm,
+    plot_distance_to_best_arm_s
 )

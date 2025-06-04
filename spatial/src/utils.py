@@ -243,3 +243,55 @@ def plot_arm_positions(arms, rewards=None, title="Arm Positions in 2D Space"):
     plt.tight_layout()
     plt.show()
 
+
+
+# Function to plot distance to the best arm over time using a DataFrame
+def plot_distance_to_best_arm(df, palette=None):
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(
+        data=df,
+        x="time",
+        y="distance_to_opt",
+        hue="algorithm",
+        palette=palette,
+        alpha=0.8
+    )
+    plt.xlabel("Time Step")
+    plt.ylabel("Average Distance to Best Arm")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15),
+        ncol=len(df["algorithm"].unique()),
+        frameon=False
+    )
+    plt.tight_layout()
+    ax = plt.gca()
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.show()
+
+def plot_distance_to_best_arm_s(df, palette=None):
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(
+        data=df,
+        x="time",
+        y="distance_to_opt",
+        hue="algorithm",
+        palette=palette,
+        alpha=0.8
+    )
+    plt.xlabel("Time Step")
+    plt.ylabel("Distance to Best Arm")
+    plt.legend(
+        title=None,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15),
+        ncol=len(df["algorithm"].unique()),
+        frameon=False
+    )
+    plt.tight_layout()
+    ax = plt.gca()
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.show()

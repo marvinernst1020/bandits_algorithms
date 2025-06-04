@@ -1,17 +1,22 @@
 import numpy as np
 
 class RegretTracker:
-    def __init__(self, true_means: np.ndarray) -> None:
+    def __init__(self, true_means: np.ndarray, arm_positions: np.ndarray) -> None:
         """
         Parameters
         ----------
         true_means : np.ndarray
             Array of true expected rewards for each arm (shape: [K])
+        arm_positions : np.ndarray
+            Array of arm positions (shape: [K, D])
         """
         self.true_means = np.array(true_means)
         self.mu_star = np.max(true_means)
         self.instantaneous_regrets = []
         self.cumulative_regret = 0.0
+        self.arm_positions = np.array(arm_positions)
+        self.optimal_arm_index = int(np.argmax(true_means))
+        self.distances_to_opt = []
 
     def update(self, selected_arm: int) -> None:
         """
@@ -26,6 +31,16 @@ class RegretTracker:
         regret = self.mu_star - mu_a
         self.instantaneous_regrets.append(regret)
         self.cumulative_regret += regret
+        dist = np.linalg.norm(self.arm_positions[selected_arm] - self.arm_positions[self.optimal_arm_index])
+        self.distances_to_opt.append(dist)
+    def get_distances_to_opt(self) -> np.ndarray:
+        """
+        Returns
+        -------
+        np.ndarray
+            Array of distances to optimal arm at each timestep
+        """
+        return np.array(self.distances_to_opt)
 
     def get_cumulative_regret(self) -> float:
         """
@@ -51,3 +66,4 @@ class RegretTracker:
         """
         self.instantaneous_regrets = []
         self.cumulative_regret = 0.0
+        self.distances_to_opt = []
